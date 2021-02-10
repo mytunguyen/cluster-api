@@ -17,7 +17,6 @@ limitations under the License.
 package remote
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"sigs.k8s.io/cluster-api/test/helpers"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/envtest/printer"
 	// +kubebuilder:scaffold:imports
 )
@@ -38,28 +38,28 @@ const (
 
 var (
 	testEnv *helpers.TestEnvironment
-	ctx     = context.Background()
+	ctx     = ctrl.SetupSignalHandler()
 )
 
-func TestAPIs(t *testing.T) {
+func TestGinkgoSuite(t *testing.T) {
 	RegisterFailHandler(Fail)
 
 	RunSpecsWithDefaultAndCustomReporters(t,
-		"Controller Suite",
+		"Remote Controller Suite",
 		[]Reporter{printer.NewlineReporter{}})
 }
 
-var _ = BeforeSuite(func(done Done) {
+var _ = BeforeSuite(func() {
 	By("bootstrapping test environment")
 	testEnv = helpers.NewTestEnvironment()
 
 	By("starting the manager")
 	go func() {
 		defer GinkgoRecover()
-		Expect(testEnv.StartManager()).To(Succeed())
+		Expect(testEnv.StartManager(ctx)).To(Succeed())
 	}()
 
-	close(done)
+	<-testEnv.Manager.Elected()
 }, 60)
 
 var _ = AfterSuite(func() {

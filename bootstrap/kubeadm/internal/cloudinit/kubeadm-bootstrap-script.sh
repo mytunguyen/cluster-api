@@ -74,7 +74,7 @@ check_kubeadm_command() {
     log::error "kubeadm reported preflight check error during ${command}"
     ;;
   "3")
-    log::error_exit "kubeadm reported validation error for ${command}"
+    log::error_exit "kubeadm reported validation error for ${command}" "${code}"
     ;;
   *)
     log::error "kubeadm reported unknown error ${code} for ${command}"
@@ -88,7 +88,7 @@ function retry-command() {
   until [ $n -ge 5 ]; do
     log::info "running '$*'"
     # shellcheck disable=SC1083
-    "$@" --config=/tmp/kubeadm-join-config.yaml {{.KubeadmVerbosity}}
+    "$@" --config=/run/kubeadm/kubeadm-join-config.yaml {{.KubeadmVerbosity}}
     kubeadm_return=$?
     check_kubeadm_command "'$*'" "${kubeadm_return}"
     if [ ${kubeadm_return} -eq 0 ]; then
@@ -102,7 +102,7 @@ function retry-command() {
     sleep 15
   done
   if [ ${kubeadm_return} -ne 0 ]; then
-    log::error_exit "too many errors, exiting"
+    log::error_exit "too many errors, exiting" "${kubeadm_return}"
   fi
 }
 
@@ -111,11 +111,11 @@ function try-or-die-command() {
   local kubeadm_return
   log::info "running '$*'"
   # shellcheck disable=SC1083
-  "$@" --config=/tmp/kubeadm-join-config.yaml {{.KubeadmVerbosity}}
+  "$@" --config=/run/kubeadm/kubeadm-join-config.yaml {{.KubeadmVerbosity}}
   kubeadm_return=$?
   check_kubeadm_command "'$*'" "${kubeadm_return}"
   if [ ${kubeadm_return} -ne 0 ]; then
-    log::error_exit "fatal error, exiting"
+    log::error_exit "fatal error, exiting" "${kubeadm_return}"
   fi
 }
 # {{ end }}

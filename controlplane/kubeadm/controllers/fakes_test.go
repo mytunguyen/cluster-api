@@ -18,11 +18,9 @@ package controllers
 
 import (
 	"context"
-	"errors"
 
 	"github.com/blang/semver"
-	"k8s.io/apimachinery/pkg/runtime"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,19 +28,17 @@ import (
 
 type fakeManagementCluster struct {
 	// TODO: once all client interactions are moved to the Management cluster this can go away
-	Management          *internal.Management
-	ControlPlaneHealthy bool
-	EtcdHealthy         bool
-	Machines            internal.FilterableMachineCollection
-	Workload            fakeWorkloadCluster
-	Reader              client.Reader
+	Management *internal.Management
+	Machines   internal.FilterableMachineCollection
+	Workload   fakeWorkloadCluster
+	Reader     client.Reader
 }
 
-func (f *fakeManagementCluster) Get(ctx context.Context, key client.ObjectKey, obj runtime.Object) error {
+func (f *fakeManagementCluster) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
 	return f.Reader.Get(ctx, key, obj)
 }
 
-func (f *fakeManagementCluster) List(ctx context.Context, list runtime.Object, opts ...client.ListOption) error {
+func (f *fakeManagementCluster) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	return f.Reader.List(ctx, list, opts...)
 }
 
@@ -57,31 +53,18 @@ func (f *fakeManagementCluster) GetMachinesForCluster(c context.Context, n clien
 	return f.Machines, nil
 }
 
-func (f *fakeManagementCluster) TargetClusterControlPlaneIsHealthy(_ context.Context, _ client.ObjectKey) error {
-	if !f.ControlPlaneHealthy {
-		return errors.New("control plane is not healthy")
-	}
-	return nil
-}
-
-func (f *fakeManagementCluster) TargetClusterEtcdIsHealthy(_ context.Context, _ client.ObjectKey) error {
-	if !f.EtcdHealthy {
-		return errors.New("etcd is not healthy")
-	}
-	return nil
-}
-
 type fakeWorkloadCluster struct {
 	*internal.Workload
-	Status internal.ClusterStatus
+	Status            internal.ClusterStatus
+	EtcdMembersResult []string
 }
 
 func (f fakeWorkloadCluster) ForwardEtcdLeadership(_ context.Context, _ *clusterv1.Machine, _ *clusterv1.Machine) error {
 	return nil
 }
 
-func (f fakeWorkloadCluster) ReconcileEtcdMembers(ctx context.Context) error {
-	return nil
+func (f fakeWorkloadCluster) ReconcileEtcdMembers(ctx context.Context, nodeNames []string) ([]string, error) {
+	return nil, nil
 }
 
 func (f fakeWorkloadCluster) ClusterStatus(_ context.Context) (internal.ClusterStatus, error) {
@@ -110,6 +93,18 @@ func (f fakeWorkloadCluster) UpdateEtcdVersionInKubeadmConfigMap(ctx context.Con
 
 func (f fakeWorkloadCluster) UpdateKubeletConfigMap(ctx context.Context, version semver.Version) error {
 	return nil
+}
+
+func (f fakeWorkloadCluster) RemoveEtcdMemberForMachine(ctx context.Context, machine *clusterv1.Machine) error {
+	return nil
+}
+
+func (f fakeWorkloadCluster) RemoveMachineFromKubeadmConfigMap(ctx context.Context, machine *clusterv1.Machine) error {
+	return nil
+}
+
+func (f fakeWorkloadCluster) EtcdMembers(_ context.Context) ([]string, error) {
+	return f.EtcdMembersResult, nil
 }
 
 type fakeMigrator struct {

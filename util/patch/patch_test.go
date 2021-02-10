@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/pointer"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,7 +42,7 @@ var _ = Describe("Patch Helper", func() {
 		obj := &unstructured.Unstructured{
 			Object: map[string]interface{}{
 				"kind":       "BootstrapMachine",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"generateName": "test-bootstrap-",
 					"namespace":    "default",
@@ -59,6 +59,16 @@ var _ = Describe("Patch Helper", func() {
 			defer func() {
 				Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 			}()
+
+			By("Checking that the object has been created")
+			Eventually(func() error {
+				obj := obj.DeepCopy()
+				if err := testEnv.Get(ctx, key, obj); err != nil {
+					return err
+				}
+				return nil
+			}).Should(Succeed())
+
 			obj.Object["status"] = map[string]interface{}{
 				"ready": true,
 			}
@@ -71,7 +81,7 @@ var _ = Describe("Patch Helper", func() {
 			By("Modifying the OwnerReferences")
 			refs := []metav1.OwnerReference{
 				{
-					APIVersion: "cluster.x-k8s.io/v1alpha3",
+					APIVersion: "cluster.x-k8s.io/v1alpha4",
 					Kind:       "Cluster",
 					Name:       "test",
 					UID:        types.UID("fake-uid"),
@@ -119,6 +129,15 @@ var _ = Describe("Patch Helper", func() {
 				Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 			}()
 
+			By("Checking that the object has been created")
+			Eventually(func() error {
+				obj := obj.DeepCopy()
+				if err := testEnv.Get(ctx, key, obj); err != nil {
+					return err
+				}
+				return nil
+			}).Should(Succeed())
+
 			By("Creating a new patch helper")
 			patcher, err := NewHelper(obj, testEnv)
 			Expect(err).NotTo(HaveOccurred())
@@ -165,6 +184,15 @@ var _ = Describe("Patch Helper", func() {
 					Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 				}()
 
+				By("Checking that the object has been created")
+				Eventually(func() error {
+					obj := obj.DeepCopy()
+					if err := testEnv.Get(ctx, key, obj); err != nil {
+						return err
+					}
+					return nil
+				}).Should(Succeed())
+
 				By("Creating a new patch helper")
 				patcher, err := NewHelper(obj, testEnv)
 				Expect(err).NotTo(HaveOccurred())
@@ -194,6 +222,16 @@ var _ = Describe("Patch Helper", func() {
 				defer func() {
 					Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 				}()
+
+				By("Checking that the object has been created")
+				Eventually(func() error {
+					obj := obj.DeepCopy()
+					if err := testEnv.Get(ctx, key, obj); err != nil {
+						return err
+					}
+					return nil
+				}).Should(Succeed())
+
 				objCopy := obj.DeepCopy()
 
 				By("Marking a custom condition to be false")
@@ -239,6 +277,16 @@ var _ = Describe("Patch Helper", func() {
 				defer func() {
 					Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 				}()
+
+				By("Checking that the object has been created")
+				Eventually(func() error {
+					obj := obj.DeepCopy()
+					if err := testEnv.Get(ctx, key, obj); err != nil {
+						return err
+					}
+					return nil
+				}).Should(Succeed())
+
 				objCopy := obj.DeepCopy()
 
 				By("Marking a custom condition to be false")
@@ -291,6 +339,16 @@ var _ = Describe("Patch Helper", func() {
 				defer func() {
 					Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 				}()
+
+				By("Checking that the object has been created")
+				Eventually(func() error {
+					obj := obj.DeepCopy()
+					if err := testEnv.Get(ctx, key, obj); err != nil {
+						return err
+					}
+					return nil
+				}).Should(Succeed())
+
 				objCopy := obj.DeepCopy()
 
 				By("Marking a custom condition to be false")
@@ -321,7 +379,7 @@ var _ = Describe("Patch Helper", func() {
 				}, timeout).Should(BeTrue())
 			})
 
-			Specify("should return not an error if there is an unresolvable conflict but the conditions is owned by the controller", func() {
+			Specify("should not return an error if there is an unresolvable conflict but the conditions is owned by the controller", func() {
 				obj := obj.DeepCopy()
 
 				By("Creating the object")
@@ -330,6 +388,16 @@ var _ = Describe("Patch Helper", func() {
 				defer func() {
 					Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 				}()
+
+				By("Checking that the object has been created")
+				Eventually(func() error {
+					obj := obj.DeepCopy()
+					if err := testEnv.Get(ctx, key, obj); err != nil {
+						return err
+					}
+					return nil
+				}).Should(Succeed())
+
 				objCopy := obj.DeepCopy()
 
 				By("Marking a custom condition to be false")
@@ -363,6 +431,58 @@ var _ = Describe("Patch Helper", func() {
 				}, timeout).Should(BeTrue())
 			})
 
+			Specify("should not return an error if there is an unresolvable conflict when force overwrite is enabled", func() {
+				obj := obj.DeepCopy()
+
+				By("Creating the object")
+				Expect(testEnv.Create(ctx, obj)).ToNot(HaveOccurred())
+				key := client.ObjectKey{Name: obj.Name, Namespace: obj.Namespace}
+				defer func() {
+					Expect(testEnv.Delete(ctx, obj)).To(Succeed())
+				}()
+
+				By("Checking that the object has been created")
+				Eventually(func() error {
+					obj := obj.DeepCopy()
+					if err := testEnv.Get(ctx, key, obj); err != nil {
+						return err
+					}
+					return nil
+				}).Should(Succeed())
+
+				objCopy := obj.DeepCopy()
+
+				By("Marking a custom condition to be false")
+				conditions.MarkFalse(objCopy, clusterv1.ReadyCondition, "reason", clusterv1.ConditionSeverityInfo, "message")
+				Expect(testEnv.Status().Update(ctx, objCopy)).To(Succeed())
+
+				By("Validating that the local object's resource version is behind")
+				Expect(obj.ResourceVersion).ToNot(Equal(objCopy.ResourceVersion))
+
+				By("Creating a new patch helper")
+				patcher, err := NewHelper(obj, testEnv)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Marking Ready=True")
+				conditions.MarkTrue(obj, clusterv1.ReadyCondition)
+
+				By("Patching the object")
+				Expect(patcher.Patch(ctx, obj, WithForceOverwriteConditions{})).To(Succeed())
+
+				By("Validating the object has been updated")
+				Eventually(func() bool {
+					objAfter := obj.DeepCopy()
+					if err := testEnv.Get(ctx, key, objAfter); err != nil {
+						return false
+					}
+
+					readyBefore := conditions.Get(obj, clusterv1.ReadyCondition)
+					readyAfter := conditions.Get(objAfter, clusterv1.ReadyCondition)
+
+					return cmp.Equal(readyBefore, readyAfter)
+				}, timeout).Should(BeTrue())
+			})
+
 		})
 	})
 
@@ -370,7 +490,7 @@ var _ = Describe("Patch Helper", func() {
 		obj := &clusterv1.Cluster{
 			ObjectMeta: metav1.ObjectMeta{
 				GenerateName: "test-",
-				Namespace:    "test-namespace",
+				Namespace:    "default",
 			},
 		}
 
@@ -383,6 +503,15 @@ var _ = Describe("Patch Helper", func() {
 			defer func() {
 				Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 			}()
+
+			By("Checking that the object has been created")
+			Eventually(func() error {
+				obj := obj.DeepCopy()
+				if err := testEnv.Get(ctx, key, obj); err != nil {
+					return err
+				}
+				return nil
+			}).Should(Succeed())
 
 			By("Creating a new patch helper")
 			patcher, err := NewHelper(obj, testEnv)
@@ -416,6 +545,15 @@ var _ = Describe("Patch Helper", func() {
 				Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 			}()
 
+			By("Checking that the object has been created")
+			Eventually(func() error {
+				obj := obj.DeepCopy()
+				if err := testEnv.Get(ctx, key, obj); err != nil {
+					return err
+				}
+				return nil
+			}).Should(Succeed())
+
 			By("Creating a new patch helper")
 			patcher, err := NewHelper(obj, testEnv)
 			Expect(err).NotTo(HaveOccurred())
@@ -439,7 +577,7 @@ var _ = Describe("Patch Helper", func() {
 
 		Specify("updating spec", func() {
 			obj := obj.DeepCopy()
-			obj.ObjectMeta.Namespace = "test-namespace"
+			obj.ObjectMeta.Namespace = "default"
 
 			By("Creating the object")
 			Expect(testEnv.Create(ctx, obj)).ToNot(HaveOccurred())
@@ -447,6 +585,15 @@ var _ = Describe("Patch Helper", func() {
 			defer func() {
 				Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 			}()
+
+			By("Checking that the object has been created")
+			Eventually(func() error {
+				obj := obj.DeepCopy()
+				if err := testEnv.Get(ctx, key, obj); err != nil {
+					return err
+				}
+				return nil
+			}).Should(Succeed())
 
 			By("Creating a new patch helper")
 			patcher, err := NewHelper(obj, testEnv)
@@ -457,7 +604,7 @@ var _ = Describe("Patch Helper", func() {
 			obj.Spec.InfrastructureRef = &corev1.ObjectReference{
 				Kind:      "test-kind",
 				Name:      "test-ref",
-				Namespace: "test-namespace",
+				Namespace: "default",
 			}
 
 			By("Patching the object")
@@ -485,6 +632,15 @@ var _ = Describe("Patch Helper", func() {
 				Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 			}()
 
+			By("Checking that the object has been created")
+			Eventually(func() error {
+				obj := obj.DeepCopy()
+				if err := testEnv.Get(ctx, key, obj); err != nil {
+					return err
+				}
+				return nil
+			}).Should(Succeed())
+
 			By("Creating a new patch helper")
 			patcher, err := NewHelper(obj, testEnv)
 			Expect(err).NotTo(HaveOccurred())
@@ -507,7 +663,7 @@ var _ = Describe("Patch Helper", func() {
 
 		Specify("updating both spec, status, and adding a condition", func() {
 			obj := obj.DeepCopy()
-			obj.ObjectMeta.Namespace = "test-namespace"
+			obj.ObjectMeta.Namespace = "default"
 
 			By("Creating the object")
 			Expect(testEnv.Create(ctx, obj)).ToNot(HaveOccurred())
@@ -515,6 +671,15 @@ var _ = Describe("Patch Helper", func() {
 			defer func() {
 				Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 			}()
+
+			By("Checking that the object has been created")
+			Eventually(func() error {
+				obj := obj.DeepCopy()
+				if err := testEnv.Get(ctx, key, obj); err != nil {
+					return err
+				}
+				return nil
+			}).Should(Succeed())
 
 			By("Creating a new patch helper")
 			patcher, err := NewHelper(obj, testEnv)
@@ -525,7 +690,7 @@ var _ = Describe("Patch Helper", func() {
 			obj.Spec.InfrastructureRef = &corev1.ObjectReference{
 				Kind:      "test-kind",
 				Name:      "test-ref",
-				Namespace: "test-namespace",
+				Namespace: "default",
 			}
 
 			By("Updating the object status")
@@ -555,7 +720,7 @@ var _ = Describe("Patch Helper", func() {
 		obj := &clusterv1.MachineSet{
 			ObjectMeta: metav1.ObjectMeta{
 				GenerateName: "test-ms",
-				Namespace:    "test-namespace",
+				Namespace:    "default",
 			},
 			Spec: clusterv1.MachineSetSpec{
 				ClusterName: "test1",
@@ -576,6 +741,15 @@ var _ = Describe("Patch Helper", func() {
 			defer func() {
 				Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 			}()
+
+			By("Checking that the object has been created")
+			Eventually(func() error {
+				obj := obj.DeepCopy()
+				if err := testEnv.Get(ctx, key, obj); err != nil {
+					return err
+				}
+				return nil
+			}).Should(Succeed())
 
 			By("Creating a new patch helper")
 			patcher, err := NewHelper(obj, testEnv)
@@ -608,6 +782,15 @@ var _ = Describe("Patch Helper", func() {
 			defer func() {
 				Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 			}()
+
+			By("Checking that the object has been created")
+			Eventually(func() error {
+				obj := obj.DeepCopy()
+				if err := testEnv.Get(ctx, key, obj); err != nil {
+					return err
+				}
+				return nil
+			}).Should(Succeed())
 
 			By("Creating a new patch helper")
 			patcher, err := NewHelper(obj, testEnv)
@@ -650,6 +833,16 @@ var _ = Describe("Patch Helper", func() {
 			defer func() {
 				Expect(testEnv.Delete(ctx, obj)).To(Succeed())
 			}()
+
+			By("Checking that the object has been created")
+			Eventually(func() error {
+				obj := obj.DeepCopy()
+				if err := testEnv.Get(ctx, key, obj); err != nil {
+					return err
+				}
+				return nil
+			}).Should(Succeed())
+
 			obj.Status.ObservedGeneration = obj.GetGeneration()
 			lastGeneration := obj.GetGeneration()
 			Expect(testEnv.Status().Update(ctx, obj))

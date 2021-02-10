@@ -31,11 +31,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/pointer"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/controllers/external"
 	capierrors "sigs.k8s.io/cluster-api/errors"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1alpha3"
+	expv1 "sigs.k8s.io/cluster-api/exp/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/util/annotations"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -90,7 +91,7 @@ func (r *MachinePoolReconciler) reconcilePhase(mp *expv1.MachinePool) {
 
 // reconcileExternal handles generic unstructured objects referenced by a MachinePool.
 func (r *MachinePoolReconciler) reconcileExternal(ctx context.Context, cluster *clusterv1.Cluster, m *expv1.MachinePool, ref *corev1.ObjectReference) (external.ReconcileOutput, error) {
-	logger := r.Log.WithValues("machinepool", m.Name, "namespace", m.Namespace)
+	log := ctrl.LoggerFrom(ctx)
 
 	obj, err := external.Get(ctx, r.Client, ref, m.Namespace)
 	if err != nil {
@@ -103,7 +104,7 @@ func (r *MachinePoolReconciler) reconcileExternal(ctx context.Context, cluster *
 
 	// if external ref is paused, return error.
 	if annotations.IsPaused(cluster, obj) {
-		logger.V(3).Info("External object referenced is paused")
+		log.V(3).Info("External object referenced is paused")
 		return external.ReconcileOutput{Paused: true}, nil
 	}
 
@@ -114,7 +115,7 @@ func (r *MachinePoolReconciler) reconcileExternal(ctx context.Context, cluster *
 	}
 
 	// Set external object ControllerReference to the MachinePool.
-	if err := controllerutil.SetControllerReference(m, obj, r.scheme); err != nil {
+	if err := controllerutil.SetControllerReference(m, obj, r.Client.Scheme()); err != nil {
 		return external.ReconcileOutput{}, err
 	}
 
@@ -134,7 +135,7 @@ func (r *MachinePoolReconciler) reconcileExternal(ctx context.Context, cluster *
 	// Add watcher for external object, if there isn't one already.
 	_, loaded := r.externalWatchers.LoadOrStore(obj.GroupVersionKind().String(), struct{}{})
 	if !loaded && r.controller != nil {
-		logger.Info("Adding watcher on external object", "gvk", obj.GroupVersionKind())
+		log.Info("Adding watcher on external object", "gvk", obj.GroupVersionKind())
 		err := r.controller.Watch(
 			&source.Kind{Type: obj},
 			&handler.EnqueueRequestForOwner{OwnerType: &expv1.MachinePool{}},
@@ -166,7 +167,7 @@ func (r *MachinePoolReconciler) reconcileExternal(ctx context.Context, cluster *
 
 // reconcileBootstrap reconciles the Spec.Bootstrap.ConfigRef object on a MachinePool.
 func (r *MachinePoolReconciler) reconcileBootstrap(ctx context.Context, cluster *clusterv1.Cluster, m *expv1.MachinePool) (ctrl.Result, error) {
-	logger := r.Log.WithValues("cluster", cluster.Name, "machinepool", m.Name, "namespace", m.Namespace)
+	log := ctrl.LoggerFrom(ctx, "cluster", cluster.Name)
 
 	// Call generic external reconciler if we have an external reference.
 	var bootstrapConfig *unstructured.Unstructured
@@ -183,8 +184,9 @@ func (r *MachinePoolReconciler) reconcileBootstrap(ctx context.Context, cluster 
 	}
 
 	// If the bootstrap data secret is populated, set ready and return.
-	if m.Spec.Template.Spec.Bootstrap.Data != nil || m.Spec.Template.Spec.Bootstrap.DataSecretName != nil {
+	if m.Spec.Template.Spec.Bootstrap.DataSecretName != nil {
 		m.Status.BootstrapReady = true
+		conditions.MarkTrue(m, clusterv1.BootstrapReadyCondition)
 		return ctrl.Result{}, nil
 	}
 
@@ -197,8 +199,16 @@ func (r *MachinePoolReconciler) reconcileBootstrap(ctx context.Context, cluster 
 	ready, err := external.IsReady(bootstrapConfig)
 	if err != nil {
 		return ctrl.Result{}, err
-	} else if !ready {
-		logger.V(2).Info("Bootstrap provider is not ready, requeuing")
+	}
+
+	// Report a summary of current status of the bootstrap object defined for this machine pool.
+	conditions.SetMirror(m, clusterv1.BootstrapReadyCondition,
+		conditions.UnstructuredGetter(bootstrapConfig),
+		conditions.WithFallbackValue(ready, clusterv1.WaitingForDataSecretFallbackReason, clusterv1.ConditionSeverityInfo, ""),
+	)
+
+	if !ready {
+		log.V(2).Info("Bootstrap provider is not ready, requeuing")
 		return ctrl.Result{RequeueAfter: externalReadyWait}, nil
 	}
 
@@ -217,14 +227,14 @@ func (r *MachinePoolReconciler) reconcileBootstrap(ctx context.Context, cluster 
 
 // reconcileInfrastructure reconciles the Spec.InfrastructureRef object on a MachinePool.
 func (r *MachinePoolReconciler) reconcileInfrastructure(ctx context.Context, cluster *clusterv1.Cluster, mp *expv1.MachinePool) (ctrl.Result, error) {
-	logger := r.Log.WithValues("cluster", cluster.Name, "machinepool", mp.Name, "namespace", mp.Namespace)
+	log := ctrl.LoggerFrom(ctx, "cluster", cluster.Name)
 
 	// Call generic external reconciler.
 	infraReconcileResult, err := r.reconcileExternal(ctx, cluster, mp, &mp.Spec.Template.Spec.InfrastructureRef)
 	if err != nil {
 		if mp.Status.InfrastructureReady && strings.Contains(err.Error(), "could not find") {
 			// Infra object went missing after the machine pool was up and running
-			logger.Error(err, "MachinePool infrastructure reference has been deleted after being ready, setting failure state")
+			log.Error(err, "MachinePool infrastructure reference has been deleted after being ready, setting failure state")
 			mp.Status.FailureReason = capierrors.MachinePoolStatusErrorPtr(capierrors.InvalidConfigurationMachinePoolError)
 			mp.Status.FailureMessage = pointer.StringPtr(fmt.Sprintf("MachinePool infrastructure resource %v with name %q has been deleted after being ready",
 				mp.Spec.Template.Spec.InfrastructureRef.GroupVersionKind(), mp.Spec.Template.Spec.InfrastructureRef.Name))
@@ -247,8 +257,15 @@ func (r *MachinePoolReconciler) reconcileInfrastructure(ctx context.Context, clu
 	}
 
 	mp.Status.InfrastructureReady = ready
+
+	// Report a summary of current status of the infrastructure object defined for this machine pool.
+	conditions.SetMirror(mp, clusterv1.InfrastructureReadyCondition,
+		conditions.UnstructuredGetter(infraConfig),
+		conditions.WithFallbackValue(ready, clusterv1.WaitingForInfrastructureFallbackReason, clusterv1.ConditionSeverityInfo, ""),
+	)
+
 	if !mp.Status.InfrastructureReady {
-		logger.Info("Infrastructure provider is not ready, requeuing")
+		log.Info("Infrastructure provider is not ready, requeuing")
 		return ctrl.Result{RequeueAfter: externalReadyWait}, nil
 	}
 
@@ -257,7 +274,7 @@ func (r *MachinePoolReconciler) reconcileInfrastructure(ctx context.Context, clu
 	if err := util.UnstructuredUnmarshalField(infraConfig, &providerIDList, "spec", "providerIDList"); err != nil {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to retrieve data from infrastructure provider for MachinePool %q in namespace %q", mp.Name, mp.Namespace)
 	} else if len(providerIDList) == 0 {
-		logger.Info("Retrieved empty Spec.ProviderIDList from infrastructure provider")
+		log.Info("Retrieved empty Spec.ProviderIDList from infrastructure provider")
 		return ctrl.Result{RequeueAfter: externalReadyWait}, nil
 	}
 
@@ -268,7 +285,7 @@ func (r *MachinePoolReconciler) reconcileInfrastructure(ctx context.Context, clu
 			return ctrl.Result{}, errors.Wrapf(err, "failed to retrieve replicas from infrastructure provider for MachinePool %q in namespace %q", mp.Name, mp.Namespace)
 		}
 	} else if mp.Status.Replicas == 0 {
-		logger.Info("Retrieved unset Status.Replicas from infrastructure provider")
+		log.Info("Retrieved unset Status.Replicas from infrastructure provider")
 		return ctrl.Result{RequeueAfter: externalReadyWait}, nil
 	}
 

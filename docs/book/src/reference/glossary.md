@@ -27,7 +27,7 @@ A temporary cluster that is used to provision a Target Management cluster.
 ---
 
 ### CAEP
-Cluster API Enhancement Proposal - patterned after [KEP](https://github.com/kubernetes/enhancements/blob/master/keps/README.md). See [template](https://github.com/kubernetes-sigs/cluster-api/blob/master/docs/proposals/YYYYMMDD-template.md)
+Cluster API Enhancement Proposal - patterned after [KEP](https://git.k8s.io/enhancements/keps/README.md). See [template](https://github.com/kubernetes-sigs/cluster-api/blob/master/docs/proposals/YYYYMMDD-template.md)
 
 ### CAPI
 Core Cluster API
@@ -40,6 +40,9 @@ Cluster API Bootstrap Provider Kubeadm
 
 ### CAPD
 Cluster API Provider Docker
+
+### CAPDO
+Cluster API Provider DigitalOcean
 
 ### CAPG
 Cluster API Google Cloud Provider
@@ -139,11 +142,15 @@ Perform create, scale, upgrade, or destroy operations on the cluster.
 
 The cluster where one or more Infrastructure Providers run, and where resources (e.g. Machines) are stored. Typically referred to when you are provisioning multiple workload clusters.
 
-### Management group
+### Multi-tenancy
 
-A management group is a group of providers composed by a CoreProvider and a set of Bootstrap/ControlPlane/Infrastructure providers
-watching objects in the same namespace. For example, a management group can be used for upgrades, in order to ensure all the providers
-in a management group support the same Cluster API version.
+Multi tenancy in Cluster API defines the capability of an infrastructure provider to manage different credentials, each
+one of them corresponding to an infrastructure tenant.
+
+Please note that up until v1alpha3 this concept had a different meaning, referring to the capability to run multiple
+instances of the same provider, each one with its own credentials; starting from v1alpha4 we are disambiguating the two concepts.
+
+see [Multi-tenancy](../developer/architecture/controllers/multi-tenancy.md) and [Support multiple instances](../developer/architecture/controllers/support-multiple-instances.md).
 
 # N
 ---

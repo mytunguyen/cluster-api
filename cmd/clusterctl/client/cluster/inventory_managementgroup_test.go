@@ -22,7 +22,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test"
 )
@@ -155,7 +155,11 @@ func Test_inventoryClient_GetManagementGroups(t *testing.T) {
 				return
 			}
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(got).To(Equal(tt.want))
+			g.Expect(got).To(HaveLen(len(tt.want)))
+			for i := range tt.want {
+				g.Expect(got[i].CoreProvider).To(Equal(tt.want[i].CoreProvider))
+				g.Expect(got[i].Providers).To(ConsistOf(tt.want[i].Providers))
+			}
 		})
 	}
 }
@@ -167,8 +171,9 @@ func fakeProvider(name string, providerType clusterctlv1.ProviderType, version, 
 			Kind:       "Provider",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: targetNamespace,
-			Name:      clusterctlv1.ManifestLabel(name, providerType),
+			ResourceVersion: "1",
+			Namespace:       targetNamespace,
+			Name:            clusterctlv1.ManifestLabel(name, providerType),
 			Labels: map[string]string{
 				clusterctlv1.ClusterctlLabelName:     "",
 				clusterv1.ProviderLabelName:          clusterctlv1.ManifestLabel(name, providerType),

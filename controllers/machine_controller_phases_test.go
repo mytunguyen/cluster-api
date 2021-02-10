@@ -17,7 +17,6 @@ limitations under the License.
 package controllers
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -29,10 +28,16 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/pointer"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/controllers/external"
+	"sigs.k8s.io/cluster-api/controllers/remote"
+	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -64,13 +69,13 @@ var _ = Describe("Reconcile Machine Phases", func() {
 			ClusterName: defaultCluster.Name,
 			Bootstrap: clusterv1.Bootstrap{
 				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha3",
+					APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha4",
 					Kind:       "BootstrapMachine",
 					Name:       "bootstrap-config1",
 				},
 			},
 			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
+				APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha4",
 				Kind:       "InfrastructureMachine",
 				Name:       "infra-config1",
 			},
@@ -80,7 +85,7 @@ var _ = Describe("Reconcile Machine Phases", func() {
 	defaultBootstrap := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "BootstrapMachine",
-			"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+			"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 			"metadata": map[string]interface{}{
 				"name":      "bootstrap-config1",
 				"namespace": "default",
@@ -93,7 +98,7 @@ var _ = Describe("Reconcile Machine Phases", func() {
 	defaultInfra := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"kind":       "InfrastructureMachine",
-			"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
+			"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha4",
 			"metadata": map[string]interface{}{
 				"name":      "infra-config1",
 				"namespace": "default",
@@ -104,7 +109,7 @@ var _ = Describe("Reconcile Machine Phases", func() {
 	}
 
 	BeforeEach(func() {
-		defaultKubeconfigSecret = kubeconfig.GenerateSecret(defaultCluster, kubeconfig.FromEnvTestConfig(testEnv.Config, defaultCluster))
+		defaultKubeconfigSecret = kubeconfig.GenerateSecret(defaultCluster, kubeconfig.FromEnvTestConfig(&rest.Config{}, defaultCluster))
 	})
 
 	It("Should set OwnerReference and cluster name label on external objects", func() {
@@ -113,24 +118,23 @@ var _ = Describe("Reconcile Machine Phases", func() {
 		infraConfig := defaultInfra.DeepCopy()
 
 		r := &MachineReconciler{
-			Client: fake.NewFakeClientWithScheme(scheme.Scheme,
-				defaultCluster,
-				defaultKubeconfigSecret,
-				machine,
-				external.TestGenericBootstrapCRD.DeepCopy(),
-				external.TestGenericInfrastructureCRD.DeepCopy(),
-				bootstrapConfig,
-				infraConfig,
-			),
-			Log:    log.Log,
-			scheme: scheme.Scheme,
+			Client: fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithObjects(defaultCluster,
+					defaultKubeconfigSecret,
+					machine,
+					external.TestGenericBootstrapCRD.DeepCopy(),
+					external.TestGenericInfrastructureCRD.DeepCopy(),
+					bootstrapConfig,
+					infraConfig,
+				).Build(),
 		}
 
-		res, err := r.reconcile(context.Background(), defaultCluster, machine)
+		res, err := r.reconcile(ctx, defaultCluster, machine)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res.Requeue).To(BeTrue())
+		Expect(res.RequeueAfter).To(Equal(externalReadyWait))
 
-		r.reconcilePhase(context.Background(), machine)
+		r.reconcilePhase(ctx, machine)
 
 		Expect(r.Client.Get(ctx, types.NamespacedName{Name: bootstrapConfig.GetName(), Namespace: bootstrapConfig.GetNamespace()}, bootstrapConfig)).To(Succeed())
 
@@ -149,24 +153,23 @@ var _ = Describe("Reconcile Machine Phases", func() {
 		infraConfig := defaultInfra.DeepCopy()
 
 		r := &MachineReconciler{
-			Client: fake.NewFakeClientWithScheme(scheme.Scheme,
-				defaultCluster,
-				defaultKubeconfigSecret,
-				machine,
-				external.TestGenericBootstrapCRD.DeepCopy(),
-				external.TestGenericInfrastructureCRD.DeepCopy(),
-				bootstrapConfig,
-				infraConfig,
-			),
-			Log:    log.Log,
-			scheme: scheme.Scheme,
+			Client: fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithObjects(defaultCluster,
+					defaultKubeconfigSecret,
+					machine,
+					external.TestGenericBootstrapCRD.DeepCopy(),
+					external.TestGenericInfrastructureCRD.DeepCopy(),
+					bootstrapConfig,
+					infraConfig,
+				).Build(),
 		}
 
-		res, err := r.reconcile(context.Background(), defaultCluster, machine)
+		res, err := r.reconcile(ctx, defaultCluster, machine)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res.Requeue).To(BeTrue())
+		Expect(res.RequeueAfter).To(Equal(externalReadyWait))
 
-		r.reconcilePhase(context.Background(), machine)
+		r.reconcilePhase(ctx, machine)
 		Expect(machine.Status.GetTypedPhase()).To(Equal(clusterv1.MachinePhasePending))
 
 		// LastUpdated should be set as the phase changes
@@ -190,24 +193,23 @@ var _ = Describe("Reconcile Machine Phases", func() {
 		machine.Status.LastUpdated = &lastUpdated
 
 		r := &MachineReconciler{
-			Client: fake.NewFakeClientWithScheme(scheme.Scheme,
-				defaultCluster,
-				defaultKubeconfigSecret,
-				machine,
-				external.TestGenericBootstrapCRD.DeepCopy(),
-				external.TestGenericInfrastructureCRD.DeepCopy(),
-				bootstrapConfig,
-				infraConfig,
-			),
-			Log:    log.Log,
-			scheme: scheme.Scheme,
+			Client: fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithObjects(defaultCluster,
+					defaultKubeconfigSecret,
+					machine,
+					external.TestGenericBootstrapCRD.DeepCopy(),
+					external.TestGenericInfrastructureCRD.DeepCopy(),
+					bootstrapConfig,
+					infraConfig,
+				).Build(),
 		}
 
-		res, err := r.reconcile(context.Background(), defaultCluster, machine)
+		res, err := r.reconcile(ctx, defaultCluster, machine)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res.Requeue).To(BeTrue())
+		Expect(res.Requeue).To(BeFalse())
 
-		r.reconcilePhase(context.Background(), machine)
+		r.reconcilePhase(ctx, machine)
 		Expect(machine.Status.GetTypedPhase()).To(Equal(clusterv1.MachinePhaseProvisioning))
 
 		// Verify that the LastUpdated timestamp was updated
@@ -256,27 +258,36 @@ var _ = Describe("Reconcile Machine Phases", func() {
 		lastUpdated := metav1.NewTime(time.Now().Add(-10 * time.Second))
 		machine.Status.LastUpdated = &lastUpdated
 
-		r := &MachineReconciler{
-			Client: fake.NewFakeClientWithScheme(scheme.Scheme,
-				defaultCluster,
-				defaultKubeconfigSecret,
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "machine-test-node",
+				Namespace: metav1.NamespaceDefault,
+			},
+			Spec: corev1.NodeSpec{ProviderID: "test://id-1"},
+		}
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithObjects(defaultCluster,
 				machine,
+				node,
 				external.TestGenericBootstrapCRD.DeepCopy(),
 				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
-			),
-			Log:    log.Log,
-			scheme: scheme.Scheme,
+				defaultKubeconfigSecret,
+			).Build()
+		r := &MachineReconciler{
+			Client:  cl,
+			Tracker: remote.NewTestClusterCacheTracker(log.NullLogger{}, cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
 		}
 
-		res, err := r.reconcile(context.Background(), defaultCluster, machine)
+		res, err := r.reconcile(ctx, defaultCluster, machine)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.Requeue).To(BeFalse())
 		Expect(machine.Status.Addresses).To(HaveLen(2))
 		Expect(*machine.Spec.FailureDomain).To(Equal("us-east-2a"))
 
-		r.reconcilePhase(context.Background(), machine)
+		r.reconcilePhase(ctx, machine)
 		Expect(machine.Status.GetTypedPhase()).To(Equal(clusterv1.MachinePhaseRunning))
 
 		// Verify that the LastUpdated timestamp was updated
@@ -310,26 +321,35 @@ var _ = Describe("Reconcile Machine Phases", func() {
 		lastUpdated := metav1.NewTime(time.Now().Add(-10 * time.Second))
 		machine.Status.LastUpdated = &lastUpdated
 
-		r := &MachineReconciler{
-			Client: fake.NewFakeClientWithScheme(scheme.Scheme,
-				defaultCluster,
-				defaultKubeconfigSecret,
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "machine-test-node",
+				Namespace: metav1.NamespaceDefault,
+			},
+			Spec: corev1.NodeSpec{ProviderID: "test://id-1"},
+		}
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithObjects(defaultCluster,
 				machine,
+				node,
 				external.TestGenericBootstrapCRD.DeepCopy(),
 				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
-			),
-			Log:    log.Log,
-			scheme: scheme.Scheme,
+				defaultKubeconfigSecret,
+			).Build()
+		r := &MachineReconciler{
+			Client:  cl,
+			Tracker: remote.NewTestClusterCacheTracker(log.NullLogger{}, cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
 		}
 
-		res, err := r.reconcile(context.Background(), defaultCluster, machine)
+		res, err := r.reconcile(ctx, defaultCluster, machine)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.Requeue).To(BeFalse())
 		Expect(machine.Status.Addresses).To(HaveLen(0))
 
-		r.reconcilePhase(context.Background(), machine)
+		r.reconcilePhase(ctx, machine)
 		Expect(machine.Status.GetTypedPhase()).To(Equal(clusterv1.MachinePhaseRunning))
 
 		// Verify that the LastUpdated timestamp was updated
@@ -374,26 +394,34 @@ var _ = Describe("Reconcile Machine Phases", func() {
 		// Set the LastUpdated to be able to verify it is updated when the phase changes
 		lastUpdated := metav1.NewTime(time.Now().Add(-10 * time.Second))
 		machine.Status.LastUpdated = &lastUpdated
-
-		r := &MachineReconciler{
-			Client: fake.NewFakeClientWithScheme(scheme.Scheme,
-				defaultCluster,
-				defaultKubeconfigSecret,
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "machine-test-node",
+				Namespace: metav1.NamespaceDefault,
+			},
+			Spec: corev1.NodeSpec{ProviderID: "test://id-1"},
+		}
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithObjects(defaultCluster,
 				machine,
+				node,
 				external.TestGenericBootstrapCRD.DeepCopy(),
 				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
-			),
-			Log:    log.Log,
-			scheme: scheme.Scheme,
+				defaultKubeconfigSecret,
+			).Build()
+		r := &MachineReconciler{
+			Client:  cl,
+			Tracker: remote.NewTestClusterCacheTracker(log.NullLogger{}, cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
 		}
 
-		res, err := r.reconcile(context.Background(), defaultCluster, machine)
+		res, err := r.reconcile(ctx, defaultCluster, machine)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.Requeue).To(BeFalse())
 
-		r.reconcilePhase(context.Background(), machine)
+		r.reconcilePhase(ctx, machine)
 		Expect(machine.Status.GetTypedPhase()).To(Equal(clusterv1.MachinePhaseRunning))
 
 		// Verify that the LastUpdated timestamp was updated
@@ -421,24 +449,23 @@ var _ = Describe("Reconcile Machine Phases", func() {
 		machine.Status.LastUpdated = &lastUpdated
 
 		r := &MachineReconciler{
-			Client: fake.NewFakeClientWithScheme(scheme.Scheme,
-				defaultCluster,
-				defaultKubeconfigSecret,
-				machine,
-				external.TestGenericBootstrapCRD.DeepCopy(),
-				external.TestGenericInfrastructureCRD.DeepCopy(),
-				bootstrapConfig,
-				infraConfig,
-			),
-			Log:    log.Log,
-			scheme: scheme.Scheme,
+			Client: fake.NewClientBuilder().
+				WithScheme(scheme.Scheme).
+				WithObjects(defaultCluster,
+					defaultKubeconfigSecret,
+					machine,
+					external.TestGenericBootstrapCRD.DeepCopy(),
+					external.TestGenericInfrastructureCRD.DeepCopy(),
+					bootstrapConfig,
+					infraConfig,
+				).Build(),
 		}
 
-		res, err := r.reconcile(context.Background(), defaultCluster, machine)
+		res, err := r.reconcile(ctx, defaultCluster, machine)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(res.Requeue).To(BeTrue())
+		Expect(res.RequeueAfter).To(Equal(externalReadyWait))
 
-		r.reconcilePhase(context.Background(), machine)
+		r.reconcilePhase(ctx, machine)
 		Expect(machine.Status.GetTypedPhase()).To(Equal(clusterv1.MachinePhaseProvisioned))
 
 		// Verify that the LastUpdated timestamp was updated
@@ -448,6 +475,9 @@ var _ = Describe("Reconcile Machine Phases", func() {
 
 	It("Should set `Deleting` when Machine is being deleted", func() {
 		machine := defaultMachine.DeepCopy()
+		// Need the second Machine to allow deletion of one.
+		machineSecond := defaultMachine.DeepCopy()
+
 		bootstrapConfig := defaultBootstrap.DeepCopy()
 		infraConfig := defaultInfra.DeepCopy()
 
@@ -477,6 +507,11 @@ var _ = Describe("Reconcile Machine Phases", func() {
 		}, "addresses")
 		Expect(err).NotTo(HaveOccurred())
 
+		// Set Cluster label.
+		machine.Labels[clusterv1.ClusterLabelName] = machine.Spec.ClusterName
+		machine.ResourceVersion = "1"
+		machineSecond.Labels[clusterv1.ClusterLabelName] = machine.Spec.ClusterName
+		machineSecond.Name = "SecondMachine"
 		// Set NodeRef.
 		machine.Status.NodeRef = &corev1.ObjectReference{Kind: "Node", Name: "machine-test-node"}
 
@@ -487,26 +522,33 @@ var _ = Describe("Reconcile Machine Phases", func() {
 		lastUpdated := metav1.NewTime(time.Now().Add(-10 * time.Second))
 		machine.Status.LastUpdated = &lastUpdated
 
-		r := &MachineReconciler{
-			Client: fake.NewFakeClientWithScheme(scheme.Scheme,
-				defaultCluster,
+		cl := fake.NewClientBuilder().
+			WithScheme(scheme.Scheme).
+			WithObjects(defaultCluster,
 				defaultKubeconfigSecret,
 				machine,
+				machineSecond,
 				external.TestGenericBootstrapCRD.DeepCopy(),
 				external.TestGenericInfrastructureCRD.DeepCopy(),
 				bootstrapConfig,
 				infraConfig,
-			),
-			Log:    log.Log,
-			scheme: scheme.Scheme,
+			).Build()
+		r := &MachineReconciler{
+			Client:   cl,
+			Tracker:  remote.NewTestClusterCacheTracker(log.NullLogger{}, cl, scheme.Scheme, client.ObjectKey{Name: defaultCluster.Name, Namespace: defaultCluster.Namespace}),
+			recorder: record.NewFakeRecorder(32),
 		}
 
-		res, err := r.reconcile(context.Background(), defaultCluster, machine)
+		res, err := r.reconcileDelete(ctx, defaultCluster, machine)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.Requeue).To(BeFalse())
 
-		r.reconcilePhase(context.Background(), machine)
+		r.reconcilePhase(ctx, machine)
 		Expect(machine.Status.GetTypedPhase()).To(Equal(clusterv1.MachinePhaseDeleting))
+
+		nodeHealthyCondition := conditions.Get(machine, clusterv1.MachineNodeHealthyCondition)
+		Expect(nodeHealthyCondition.Status).To(Equal(corev1.ConditionFalse))
+		Expect(nodeHealthyCondition.Reason).To(Equal(clusterv1.DeletingReason))
 
 		// Verify that the LastUpdated timestamp was updated
 		Expect(machine.Status.LastUpdated).ToNot(BeNil())
@@ -526,7 +568,7 @@ func TestReconcileBootstrap(t *testing.T) {
 		Spec: clusterv1.MachineSpec{
 			Bootstrap: clusterv1.Bootstrap{
 				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha3",
+					APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha4",
 					Kind:       "BootstrapMachine",
 					Name:       "bootstrap-config1",
 				},
@@ -545,6 +587,7 @@ func TestReconcileBootstrap(t *testing.T) {
 		name            string
 		bootstrapConfig map[string]interface{}
 		machine         *clusterv1.Machine
+		expectResult    ctrl.Result
 		expectError     bool
 		expected        func(g *WithT, m *clusterv1.Machine)
 	}{
@@ -552,7 +595,7 @@ func TestReconcileBootstrap(t *testing.T) {
 			name: "new machine, bootstrap config ready with data",
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "BootstrapMachine",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": "default",
@@ -563,7 +606,8 @@ func TestReconcileBootstrap(t *testing.T) {
 					"dataSecretName": "secret-data",
 				},
 			},
-			expectError: false,
+			expectResult: ctrl.Result{},
+			expectError:  false,
 			expected: func(g *WithT, m *clusterv1.Machine) {
 				g.Expect(m.Status.BootstrapReady).To(BeTrue())
 				g.Expect(m.Spec.Bootstrap.DataSecretName).ToNot(BeNil())
@@ -574,7 +618,7 @@ func TestReconcileBootstrap(t *testing.T) {
 			name: "new machine, bootstrap config ready with no data",
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "BootstrapMachine",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": "default",
@@ -584,17 +628,18 @@ func TestReconcileBootstrap(t *testing.T) {
 					"ready": true,
 				},
 			},
-			expectError: true,
+			expectResult: ctrl.Result{},
+			expectError:  true,
 			expected: func(g *WithT, m *clusterv1.Machine) {
 				g.Expect(m.Status.BootstrapReady).To(BeFalse())
-				g.Expect(m.Spec.Bootstrap.Data).To(BeNil())
+				g.Expect(m.Spec.Bootstrap.DataSecretName).To(BeNil())
 			},
 		},
 		{
 			name: "new machine, bootstrap config not ready",
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "BootstrapMachine",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": "default",
@@ -602,7 +647,8 @@ func TestReconcileBootstrap(t *testing.T) {
 				"spec":   map[string]interface{}{},
 				"status": map[string]interface{}{},
 			},
-			expectError: true,
+			expectResult: ctrl.Result{RequeueAfter: externalReadyWait},
+			expectError:  false,
 			expected: func(g *WithT, m *clusterv1.Machine) {
 				g.Expect(m.Status.BootstrapReady).To(BeFalse())
 			},
@@ -611,7 +657,7 @@ func TestReconcileBootstrap(t *testing.T) {
 			name: "new machine, bootstrap config is not found",
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "BootstrapMachine",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": "wrong-namespace",
@@ -619,7 +665,8 @@ func TestReconcileBootstrap(t *testing.T) {
 				"spec":   map[string]interface{}{},
 				"status": map[string]interface{}{},
 			},
-			expectError: true,
+			expectResult: ctrl.Result{RequeueAfter: externalReadyWait},
+			expectError:  false,
 			expected: func(g *WithT, m *clusterv1.Machine) {
 				g.Expect(m.Status.BootstrapReady).To(BeFalse())
 			},
@@ -628,7 +675,7 @@ func TestReconcileBootstrap(t *testing.T) {
 			name: "new machine, no bootstrap config or data",
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "BootstrapMachine",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": "wrong-namespace",
@@ -636,13 +683,14 @@ func TestReconcileBootstrap(t *testing.T) {
 				"spec":   map[string]interface{}{},
 				"status": map[string]interface{}{},
 			},
-			expectError: true,
+			expectResult: ctrl.Result{RequeueAfter: externalReadyWait},
+			expectError:  false,
 		},
 		{
 			name: "existing machine, bootstrap data should not change",
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "BootstrapMachine",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": "default",
@@ -661,21 +709,21 @@ func TestReconcileBootstrap(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
-							APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha3",
+							APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha4",
 							Kind:       "BootstrapMachine",
 							Name:       "bootstrap-config1",
 						},
-						Data: pointer.StringPtr("#!/bin/bash ... data"),
+						DataSecretName: pointer.StringPtr("secret-data"),
 					},
 				},
 				Status: clusterv1.MachineStatus{
 					BootstrapReady: true,
 				},
 			},
-			expectError: false,
+			expectResult: ctrl.Result{},
+			expectError:  false,
 			expected: func(g *WithT, m *clusterv1.Machine) {
 				g.Expect(m.Status.BootstrapReady).To(BeTrue())
-				g.Expect(m.Spec.Bootstrap.Data).To(BeNil())
 				g.Expect(*m.Spec.Bootstrap.DataSecretName).To(BeEquivalentTo("secret-data"))
 			},
 		},
@@ -683,7 +731,7 @@ func TestReconcileBootstrap(t *testing.T) {
 			name: "existing machine, bootstrap provider is not ready, and ownerref updated",
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "BootstrapMachine",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": "default",
@@ -710,7 +758,7 @@ func TestReconcileBootstrap(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
-							APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha3",
+							APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha4",
 							Kind:       "BootstrapMachine",
 							Name:       "bootstrap-config1",
 						},
@@ -720,7 +768,8 @@ func TestReconcileBootstrap(t *testing.T) {
 					BootstrapReady: true,
 				},
 			},
-			expectError: true,
+			expectResult: ctrl.Result{RequeueAfter: externalReadyWait},
+			expectError:  false,
 			expected: func(g *WithT, m *clusterv1.Machine) {
 				g.Expect(m.GetOwnerReferences()).NotTo(ContainRefOfGroupKind("cluster.x-k8s.io", "MachineSet"))
 			},
@@ -729,7 +778,7 @@ func TestReconcileBootstrap(t *testing.T) {
 			name: "existing machine, machineset owner and version v1alpha2, and ownerref updated",
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "BootstrapMachine",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": "default",
@@ -745,7 +794,7 @@ func TestReconcileBootstrap(t *testing.T) {
 				},
 				"spec": map[string]interface{}{},
 				"status": map[string]interface{}{
-					"ready": false,
+					"ready": true,
 				},
 			},
 			machine: &clusterv1.Machine{
@@ -766,7 +815,8 @@ func TestReconcileBootstrap(t *testing.T) {
 					BootstrapReady: true,
 				},
 			},
-			expectError: true,
+			expectResult: ctrl.Result{},
+			expectError:  true,
 			expected: func(g *WithT, m *clusterv1.Machine) {
 				g.Expect(m.GetOwnerReferences()).NotTo(ContainRefOfGroupKind("cluster.x-k8s.io", "MachineSet"))
 			},
@@ -785,17 +835,17 @@ func TestReconcileBootstrap(t *testing.T) {
 
 			bootstrapConfig := &unstructured.Unstructured{Object: tc.bootstrapConfig}
 			r := &MachineReconciler{
-				Client: fake.NewFakeClientWithScheme(scheme.Scheme,
-					tc.machine,
-					external.TestGenericBootstrapCRD.DeepCopy(),
-					external.TestGenericInfrastructureCRD.DeepCopy(),
-					bootstrapConfig,
-				),
-				Log:    log.Log,
-				scheme: scheme.Scheme,
+				Client: fake.NewClientBuilder().
+					WithScheme(scheme.Scheme).
+					WithObjects(tc.machine,
+						external.TestGenericBootstrapCRD.DeepCopy(),
+						external.TestGenericInfrastructureCRD.DeepCopy(),
+						bootstrapConfig,
+					).Build(),
 			}
 
-			err := r.reconcileBootstrap(context.Background(), defaultCluster, tc.machine)
+			res, err := r.reconcileBootstrap(ctx, defaultCluster, tc.machine)
+			g.Expect(res).To(Equal(tc.expectResult))
 			if tc.expectError {
 				g.Expect(err).ToNot(BeNil())
 			} else {
@@ -821,13 +871,13 @@ func TestReconcileInfrastructure(t *testing.T) {
 		Spec: clusterv1.MachineSpec{
 			Bootstrap: clusterv1.Bootstrap{
 				ConfigRef: &corev1.ObjectReference{
-					APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha3",
+					APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha4",
 					Kind:       "BootstrapMachine",
 					Name:       "bootstrap-config1",
 				},
 			},
 			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
+				APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha4",
 				Kind:       "InfrastructureMachine",
 				Name:       "infra-config1",
 			},
@@ -842,20 +892,20 @@ func TestReconcileInfrastructure(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name               string
-		bootstrapConfig    map[string]interface{}
-		infraConfig        map[string]interface{}
-		machine            *clusterv1.Machine
-		expectError        bool
-		expectChanged      bool
-		expectRequeueAfter bool
-		expected           func(g *WithT, m *clusterv1.Machine)
+		name            string
+		bootstrapConfig map[string]interface{}
+		infraConfig     map[string]interface{}
+		machine         *clusterv1.Machine
+		expectResult    ctrl.Result
+		expectError     bool
+		expectChanged   bool
+		expected        func(g *WithT, m *clusterv1.Machine)
 	}{
 		{
 			name: "new machine, infrastructure config ready",
 			infraConfig: map[string]interface{}{
 				"kind":       "InfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": "default",
@@ -886,6 +936,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 					},
 				},
 			},
+			expectResult:  ctrl.Result{},
 			expectError:   false,
 			expectChanged: true,
 			expected: func(g *WithT, m *clusterv1.Machine) {
@@ -903,13 +954,13 @@ func TestReconcileInfrastructure(t *testing.T) {
 				Spec: clusterv1.MachineSpec{
 					Bootstrap: clusterv1.Bootstrap{
 						ConfigRef: &corev1.ObjectReference{
-							APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha3",
+							APIVersion: "bootstrap.cluster.x-k8s.io/v1alpha4",
 							Kind:       "BootstrapMachine",
 							Name:       "bootstrap-config1",
 						},
 					},
 					InfrastructureRef: corev1.ObjectReference{
-						APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
+						APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha4",
 						Kind:       "InfrastructureMachine",
 						Name:       "infra-config1",
 					},
@@ -922,7 +973,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 			bootstrapConfig: map[string]interface{}{
 				"kind":       "BootstrapMachine",
-				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "bootstrap.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "bootstrap-config1",
 					"namespace": "default",
@@ -935,11 +986,11 @@ func TestReconcileInfrastructure(t *testing.T) {
 			},
 			infraConfig: map[string]interface{}{
 				"kind":       "InfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha4",
 				"metadata":   map[string]interface{}{},
 			},
-			expectError:        true,
-			expectRequeueAfter: true,
+			expectResult: ctrl.Result{},
+			expectError:  true,
 			expected: func(g *WithT, m *clusterv1.Machine) {
 				g.Expect(m.Status.InfrastructureReady).To(BeTrue())
 				g.Expect(m.Status.FailureMessage).ToNot(BeNil())
@@ -951,7 +1002,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 			name: "infrastructure ref is paused",
 			infraConfig: map[string]interface{}{
 				"kind":       "InfrastructureMachine",
-				"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
+				"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha4",
 				"metadata": map[string]interface{}{
 					"name":      "infra-config1",
 					"namespace": "default",
@@ -976,6 +1027,7 @@ func TestReconcileInfrastructure(t *testing.T) {
 					},
 				},
 			},
+			expectResult:  ctrl.Result{},
 			expectError:   false,
 			expectChanged: false,
 			expected: func(g *WithT, m *clusterv1.Machine) {
@@ -996,18 +1048,18 @@ func TestReconcileInfrastructure(t *testing.T) {
 
 			infraConfig := &unstructured.Unstructured{Object: tc.infraConfig}
 			r := &MachineReconciler{
-				Client: fake.NewFakeClientWithScheme(scheme.Scheme,
-					tc.machine,
-					external.TestGenericBootstrapCRD.DeepCopy(),
-					external.TestGenericInfrastructureCRD.DeepCopy(),
-					infraConfig,
-				),
-				Log:    log.Log,
-				scheme: scheme.Scheme,
+				Client: fake.NewClientBuilder().
+					WithScheme(scheme.Scheme).
+					WithObjects(tc.machine,
+						external.TestGenericBootstrapCRD.DeepCopy(),
+						external.TestGenericInfrastructureCRD.DeepCopy(),
+						infraConfig,
+					).Build(),
 			}
 
-			err := r.reconcileInfrastructure(context.Background(), defaultCluster, tc.machine)
-			r.reconcilePhase(context.Background(), tc.machine)
+			result, err := r.reconcileInfrastructure(ctx, defaultCluster, tc.machine)
+			r.reconcilePhase(ctx, tc.machine)
+			g.Expect(result).To(Equal(tc.expectResult))
 			if tc.expectError {
 				g.Expect(err).ToNot(BeNil())
 			} else {

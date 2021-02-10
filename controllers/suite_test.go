@@ -17,8 +17,8 @@ limitations under the License.
 package controllers
 
 import (
-	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -28,40 +28,27 @@ import (
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/controllers/remote"
 	"sigs.k8s.io/cluster-api/test/helpers"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/envtest/printer"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	// +kubebuilder:scaffold:imports
 )
 
-// These tests use Ginkgo (BDD-style Go testing framework). Refer to
-// http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
-
 const (
 	timeout = time.Second * 30
 )
 
 var (
-	testEnv           *helpers.TestEnvironment
-	clusterReconciler *ClusterReconciler
-	ctx               = context.Background()
+	testEnv *helpers.TestEnvironment
+	ctx     = ctrl.SetupSignalHandler()
 )
 
-func TestAPIs(t *testing.T) {
-	SetDefaultEventuallyPollingInterval(100 * time.Millisecond)
-	SetDefaultEventuallyTimeout(30 * time.Second)
-	RegisterFailHandler(Fail)
-
-	RunSpecsWithDefaultAndCustomReporters(t,
-		"Controller Suite",
-		[]Reporter{printer.NewlineReporter{}})
-}
-
-var _ = BeforeSuite(func(done Done) {
-	By("bootstrapping test environment")
+func TestMain(m *testing.M) {
+	fmt.Println("Creating new test environment")
 	testEnv = helpers.NewTestEnvironment()
 
 	// Set up a ClusterCacheTracker and ClusterCacheReconciler to provide to controllers
@@ -70,61 +57,82 @@ var _ = BeforeSuite(func(done Done) {
 		log.Log,
 		testEnv.Manager,
 	)
-	Expect(err).ToNot(HaveOccurred())
-
-	Expect((&remote.ClusterCacheReconciler{
+	if err != nil {
+		panic(fmt.Sprintf("unable to create cluster cache tracker: %v", err))
+	}
+	if err := (&remote.ClusterCacheReconciler{
 		Client:  testEnv,
 		Log:     log.Log,
 		Tracker: tracker,
-	}).SetupWithManager(testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1})).To(Succeed())
-
-	clusterReconciler = &ClusterReconciler{
-		Client:   testEnv,
-		Log:      log.Log,
-		recorder: testEnv.GetEventRecorderFor("cluster-controller"),
+	}).SetupWithManager(ctx, testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
+		panic(fmt.Sprintf("Failed to start ClusterCacheReconciler: %v", err))
 	}
-	Expect(clusterReconciler.SetupWithManager(testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1})).To(Succeed())
-	Expect((&MachineReconciler{
+	if err := (&ClusterReconciler{
 		Client:   testEnv,
-		Log:      log.Log,
+		recorder: testEnv.GetEventRecorderFor("cluster-controller"),
+	}).SetupWithManager(ctx, testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
+		panic(fmt.Sprintf("Failed to start ClusterReconciler: %v", err))
+	}
+	if err := (&MachineReconciler{
+		Client:   testEnv,
 		Tracker:  tracker,
 		recorder: testEnv.GetEventRecorderFor("machine-controller"),
-	}).SetupWithManager(testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1})).To(Succeed())
-	Expect((&MachineSetReconciler{
+	}).SetupWithManager(ctx, testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
+		panic(fmt.Sprintf("Failed to start MachineReconciler: %v", err))
+	}
+	if err := (&MachineSetReconciler{
 		Client:   testEnv,
-		Log:      log.Log,
 		Tracker:  tracker,
 		recorder: testEnv.GetEventRecorderFor("machineset-controller"),
-	}).SetupWithManager(testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1})).To(Succeed())
-	Expect((&MachineDeploymentReconciler{
+	}).SetupWithManager(ctx, testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
+		panic(fmt.Sprintf("Failed to start MMachineSetReconciler: %v", err))
+	}
+	if err := (&MachineDeploymentReconciler{
 		Client:   testEnv,
-		Log:      log.Log,
 		recorder: testEnv.GetEventRecorderFor("machinedeployment-controller"),
-	}).SetupWithManager(testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1})).To(Succeed())
-	Expect((&MachineHealthCheckReconciler{
+	}).SetupWithManager(ctx, testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
+		panic(fmt.Sprintf("Failed to start MMachineDeploymentReconciler: %v", err))
+	}
+	if err := (&MachineHealthCheckReconciler{
 		Client:   testEnv,
-		Log:      log.Log,
 		Tracker:  tracker,
 		recorder: testEnv.GetEventRecorderFor("machinehealthcheck-controller"),
-	}).SetupWithManager(testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1})).To(Succeed())
+	}).SetupWithManager(ctx, testEnv.Manager, controller.Options{MaxConcurrentReconciles: 1}); err != nil {
+		panic(fmt.Sprintf("Failed to start MachineHealthCheckReconciler : %v", err))
+	}
 
-	By("starting the manager")
 	go func() {
-		defer GinkgoRecover()
-		Expect(testEnv.StartManager()).To(Succeed())
+		fmt.Println("Starting the manager")
+		if err := testEnv.StartManager(ctx); err != nil {
+			panic(fmt.Sprintf("Failed to start the envtest manager: %v", err))
+		}
 	}()
+	<-testEnv.Manager.Elected()
 
 	// wait for webhook port to be open prior to running tests
 	testEnv.WaitForWebhooks()
-	close(done)
-}, 80)
 
-var _ = AfterSuite(func() {
-	if testEnv != nil {
-		By("tearing down the test environment")
-		Expect(testEnv.Stop()).To(Succeed())
+	code := m.Run()
+
+	fmt.Println("Tearing down test suite")
+	if err := testEnv.Stop(); err != nil {
+		panic(fmt.Sprintf("Failed to stop envtest: %v", err))
 	}
-})
+
+	os.Exit(code)
+}
+
+// TestGinkgoSuite will run the ginkgo tests.
+// This will run with the testEnv setup and teardown in TestMain.
+func TestGinkgoSuite(t *testing.T) {
+	SetDefaultEventuallyPollingInterval(100 * time.Millisecond)
+	SetDefaultEventuallyTimeout(timeout)
+	RegisterFailHandler(Fail)
+
+	RunSpecsWithDefaultAndCustomReporters(t,
+		"Controllers Suite",
+		[]Reporter{printer.NewlineReporter{}})
+}
 
 func ContainRefOfGroupKind(group, kind string) types.GomegaMatcher {
 	return &refGroupKindMatcher{

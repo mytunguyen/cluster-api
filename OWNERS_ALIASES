@@ -16,14 +16,12 @@ aliases:
   cluster-api-admins:
   - justinsb
   - detiber
-  - davidewatson
   - vincepri
 
   # non-admin folks who have write-access and can approve any PRs in the repo
   cluster-api-maintainers:
   - justinsb
   - detiber
-  - ncdc
   - vincepri
   - CecileRobertMichon
 
@@ -32,7 +30,6 @@ aliases:
   - CecileRobertMichon
   - vincepri
   - JoelSpeed
-  - benmoss
 
   # -----------------------------------------------------------
   # OWNER_ALIASES for docs/book
@@ -48,7 +45,7 @@ aliases:
   # -----------------------------------------------------------
 
   cluster-api-provider-docker-maintainers:
-  - ncdc
+  - fabriziopandini
 
   # -----------------------------------------------------------
   # OWNER_ALIASES for bootstrap/kubeadm
@@ -56,12 +53,10 @@ aliases:
 
   cluster-api-bootstrap-provider-kubeadm-maintainers:
   - fabriziopandini
-  - ncdc
   - SataQiu
 
   cluster-api-bootstrap-provider-kubeadm-reviewers:
   - fabriziopandini
-  - ncdc
 
   # -----------------------------------------------------------
   # OWNER_ALIASES for cmd/clusterctl

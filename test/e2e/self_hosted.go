@@ -28,7 +28,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/pointer"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/test/e2e/internal/log"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/test/framework/bootstrap"
@@ -48,11 +48,11 @@ type SelfHostedSpecInput struct {
 // SelfHostedSpec implements a test that verifies Cluster API creating a cluster, pivoting to a self-hosted cluster.
 func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput) {
 	var (
-		specName      = "self-hosted"
-		input         SelfHostedSpecInput
-		namespace     *corev1.Namespace
-		cancelWatches context.CancelFunc
-		cluster       *clusterv1.Cluster
+		specName         = "self-hosted"
+		input            SelfHostedSpecInput
+		namespace        *corev1.Namespace
+		cancelWatches    context.CancelFunc
+		clusterResources *clusterctl.ApplyClusterTemplateAndWaitResult
 
 		selfHostedClusterProxy  framework.ClusterProxy
 		selfHostedNamespace     *corev1.Namespace
@@ -70,14 +70,15 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 		Expect(input.E2EConfig.Variables).To(HaveKey(KubernetesVersion))
 
 		// Setup a Namespace where to host objects for this spec and create a watcher for the namespace events.
-		namespace, cancelWatches = setupSpecNamespace(context.TODO(), specName, input.BootstrapClusterProxy, input.ArtifactFolder)
+		namespace, cancelWatches = setupSpecNamespace(ctx, specName, input.BootstrapClusterProxy, input.ArtifactFolder)
+		clusterResources = new(clusterctl.ApplyClusterTemplateAndWaitResult)
 	})
 
 	It("Should pivot the bootstrap cluster to a self-hosted cluster", func() {
 
 		By("Creating a workload cluster")
 
-		cluster, _, _ = clusterctl.ApplyClusterTemplateAndWait(context.TODO(), clusterctl.ApplyClusterTemplateAndWaitInput{
+		clusterctl.ApplyClusterTemplateAndWait(ctx, clusterctl.ApplyClusterTemplateAndWaitInput{
 			ClusterProxy: input.BootstrapClusterProxy,
 			ConfigCluster: clusterctl.ConfigClusterInput{
 				LogFolder:                filepath.Join(input.ArtifactFolder, "clusters", input.BootstrapClusterProxy.GetName()),
@@ -94,25 +95,26 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 			WaitForClusterIntervals:      input.E2EConfig.GetIntervals(specName, "wait-cluster"),
 			WaitForControlPlaneIntervals: input.E2EConfig.GetIntervals(specName, "wait-control-plane"),
 			WaitForMachineDeployments:    input.E2EConfig.GetIntervals(specName, "wait-worker-nodes"),
-		})
+		}, clusterResources)
 
 		By("Turning the workload cluster into a management cluster")
 
 		// In case of the cluster id a DockerCluster, we should load controller images into the nodes.
 		// Nb. this can be achieved also by changing the DockerMachine spec, but for the time being we are using
 		// this approach because this allows to have a single source of truth for images, the e2e config
+		cluster := clusterResources.Cluster
 		if cluster.Spec.InfrastructureRef.Kind == "DockerCluster" {
-			bootstrap.LoadImagesToKindCluster(context.TODO(), bootstrap.LoadImagesToKindClusterInput{
+			Expect(bootstrap.LoadImagesToKindCluster(ctx, bootstrap.LoadImagesToKindClusterInput{
 				Name:   cluster.Name,
 				Images: input.E2EConfig.Images,
-			})
+			})).To(Succeed())
 		}
 
 		// Get a ClusterBroker so we can interact with the workload cluster
-		selfHostedClusterProxy = input.BootstrapClusterProxy.GetWorkloadCluster(context.TODO(), cluster.Namespace, cluster.Name)
+		selfHostedClusterProxy = input.BootstrapClusterProxy.GetWorkloadCluster(ctx, cluster.Namespace, cluster.Name)
 
 		Byf("Creating a namespace for hosting the %s test spec", specName)
-		selfHostedNamespace, selfHostedCancelWatches = framework.CreateNamespaceAndWatchEvents(context.TODO(), framework.CreateNamespaceAndWatchEventsInput{
+		selfHostedNamespace, selfHostedCancelWatches = framework.CreateNamespaceAndWatchEvents(ctx, framework.CreateNamespaceAndWatchEventsInput{
 			Creator:   selfHostedClusterProxy.GetClient(),
 			ClientSet: selfHostedClusterProxy.GetClientSet(),
 			Name:      namespace.Name,
@@ -120,7 +122,7 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 		})
 
 		By("Initializing the workload cluster")
-		clusterctl.InitManagementClusterAndWatchControllerLogs(context.TODO(), clusterctl.InitManagementClusterAndWatchControllerLogsInput{
+		clusterctl.InitManagementClusterAndWatchControllerLogs(ctx, clusterctl.InitManagementClusterAndWatchControllerLogsInput{
 			ClusterProxy:            selfHostedClusterProxy,
 			ClusterctlConfigPath:    input.ClusterctlConfigPath,
 			InfrastructureProviders: input.E2EConfig.InfrastructureProviders(),
@@ -141,7 +143,7 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 		}, "5s", "100ms").Should(BeNil(), "Failed to assert self-hosted API server stability")
 
 		By("Moving the cluster to self hosted")
-		clusterctl.Move(context.TODO(), clusterctl.MoveInput{
+		clusterctl.Move(ctx, clusterctl.MoveInput{
 			LogFolder:            filepath.Join(input.ArtifactFolder, "clusters", "bootstrap"),
 			ClusterctlConfigPath: input.ClusterctlConfigPath,
 			FromKubeconfigPath:   input.BootstrapClusterProxy.GetKubeconfigPath(),
@@ -172,7 +174,7 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 			framework.DumpAllResources(ctx, framework.DumpAllResourcesInput{
 				Lister:    selfHostedClusterProxy.GetClient(),
 				Namespace: namespace.Name,
-				LogPath:   filepath.Join(input.ArtifactFolder, "clusters", cluster.Name, "resources"),
+				LogPath:   filepath.Join(input.ArtifactFolder, "clusters", clusterResources.Cluster.Name, "resources"),
 			})
 		}
 		if selfHostedCluster != nil {
@@ -191,7 +193,7 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 
 			By("Moving the cluster back to bootstrap")
 			clusterctl.Move(ctx, clusterctl.MoveInput{
-				LogFolder:            filepath.Join(input.ArtifactFolder, "clusters", cluster.Name),
+				LogFolder:            filepath.Join(input.ArtifactFolder, "clusters", clusterResources.Cluster.Name),
 				ClusterctlConfigPath: input.ClusterctlConfigPath,
 				FromKubeconfigPath:   selfHostedClusterProxy.GetKubeconfigPath(),
 				ToKubeconfigPath:     input.BootstrapClusterProxy.GetKubeconfigPath(),
@@ -199,10 +201,10 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 			})
 
 			log.Logf("Waiting for the cluster to be reconciled after moving back to booststrap")
-			cluster = framework.DiscoveryAndWaitForCluster(ctx, framework.DiscoveryAndWaitForClusterInput{
+			clusterResources.Cluster = framework.DiscoveryAndWaitForCluster(ctx, framework.DiscoveryAndWaitForClusterInput{
 				Getter:    input.BootstrapClusterProxy.GetClient(),
 				Namespace: namespace.Name,
-				Name:      cluster.Name,
+				Name:      clusterResources.Cluster.Name,
 			}, input.E2EConfig.GetIntervals(specName, "wait-cluster")...)
 		}
 		if selfHostedCancelWatches != nil {
@@ -210,6 +212,6 @@ func SelfHostedSpec(ctx context.Context, inputGetter func() SelfHostedSpecInput)
 		}
 
 		// Dumps all the resources in the spec namespace, then cleanups the cluster object and the spec namespace itself.
-		dumpSpecResourcesAndCleanup(ctx, specName, input.BootstrapClusterProxy, input.ArtifactFolder, namespace, cancelWatches, cluster, input.E2EConfig.GetIntervals, input.SkipCleanup)
+		dumpSpecResourcesAndCleanup(ctx, specName, input.BootstrapClusterProxy, input.ArtifactFolder, namespace, cancelWatches, clusterResources.Cluster, input.E2EConfig.GetIntervals, input.SkipCleanup)
 	})
 }

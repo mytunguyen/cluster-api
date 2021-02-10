@@ -24,9 +24,10 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
+	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha4"
+	clusterv1exp "sigs.k8s.io/cluster-api/exp/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/test/framework"
 	"sigs.k8s.io/cluster-api/test/framework/internal/log"
 )
@@ -51,11 +52,11 @@ func InitManagementClusterAndWatchControllerLogs(ctx context.Context, input Init
 	Expect(os.MkdirAll(input.LogFolder, 0755)).To(Succeed(), "Invalid argument. input.LogFolder can't be created for InitManagementClusterAndWatchControllerLogs")
 
 	client := input.ClusterProxy.GetClient()
-	controllersDeployments := framework.GetControllerDeployments(context.TODO(), framework.GetControllerDeploymentsInput{
+	controllersDeployments := framework.GetControllerDeployments(ctx, framework.GetControllerDeploymentsInput{
 		Lister: client,
 	})
 	if len(controllersDeployments) == 0 {
-		Init(context.TODO(), InitInput{
+		Init(ctx, InitInput{
 			// pass reference to the management cluster hosting this test
 			KubeconfigPath: input.ClusterProxy.GetKubeconfigPath(),
 			// pass the clusterctl config file that points to the local provider repository created for this test
@@ -71,18 +72,18 @@ func InitManagementClusterAndWatchControllerLogs(ctx context.Context, input Init
 	}
 
 	log.Logf("Waiting for provider controllers to be running")
-	controllersDeployments = framework.GetControllerDeployments(context.TODO(), framework.GetControllerDeploymentsInput{
+	controllersDeployments = framework.GetControllerDeployments(ctx, framework.GetControllerDeploymentsInput{
 		Lister: client,
 	})
 	Expect(controllersDeployments).ToNot(BeEmpty(), "The list of controller deployments should not be empty")
 	for _, deployment := range controllersDeployments {
-		framework.WaitForDeploymentsAvailable(context.TODO(), framework.WaitForDeploymentsAvailableInput{
+		framework.WaitForDeploymentsAvailable(ctx, framework.WaitForDeploymentsAvailableInput{
 			Getter:     client,
 			Deployment: deployment,
 		}, intervals...)
 
 		// Start streaming logs from all controller providers
-		framework.WatchDeploymentLogs(context.TODO(), framework.WatchDeploymentLogsInput{
+		framework.WatchDeploymentLogs(ctx, framework.WatchDeploymentLogsInput{
 			GetLister:  client,
 			ClientSet:  input.ClusterProxy.GetClientSet(),
 			Deployment: deployment,
@@ -109,17 +110,27 @@ type ApplyClusterTemplateAndWaitInput struct {
 	WaitForClusterIntervals      []interface{}
 	WaitForControlPlaneIntervals []interface{}
 	WaitForMachineDeployments    []interface{}
+	WaitForMachinePools          []interface{}
+}
+
+type ApplyClusterTemplateAndWaitResult struct {
+	Cluster            *clusterv1.Cluster
+	ControlPlane       *controlplanev1.KubeadmControlPlane
+	MachineDeployments []*clusterv1.MachineDeployment
+	MachinePools       []*clusterv1exp.MachinePool
 }
 
 // ApplyClusterTemplateAndWait gets a cluster template using clusterctl, and waits for the cluster to be ready.
 // Important! this method assumes the cluster uses a KubeadmControlPlane and MachineDeployments.
-func ApplyClusterTemplateAndWait(ctx context.Context, input ApplyClusterTemplateAndWaitInput) (*clusterv1.Cluster, *controlplanev1.KubeadmControlPlane, []*clusterv1.MachineDeployment) {
+func ApplyClusterTemplateAndWait(ctx context.Context, input ApplyClusterTemplateAndWaitInput, result *ApplyClusterTemplateAndWaitResult) {
 	Expect(ctx).NotTo(BeNil(), "ctx is required for ApplyClusterTemplateAndWait")
 
 	Expect(input.ClusterProxy).ToNot(BeNil(), "Invalid argument. input.ClusterProxy can't be nil when calling ApplyClusterTemplateAndWait")
 
+	Expect(result).ToNot(BeNil(), "Invalid argument. result can't be nil when calling ApplyClusterTemplateAndWait")
+
 	log.Logf("Creating the workload cluster with name %q using the %q template (Kubernetes %s, %d control-plane machines, %d worker machines)",
-		input.ConfigCluster.ClusterName, valueOrDefault(input.ConfigCluster.Flavor), input.ConfigCluster.KubernetesVersion, input.ConfigCluster.ControlPlaneMachineCount, input.ConfigCluster.WorkerMachineCount)
+		input.ConfigCluster.ClusterName, valueOrDefault(input.ConfigCluster.Flavor), input.ConfigCluster.KubernetesVersion, *input.ConfigCluster.ControlPlaneMachineCount, *input.ConfigCluster.WorkerMachineCount)
 
 	log.Logf("Getting the cluster template yaml")
 	workloadClusterTemplate := ConfigCluster(ctx, ConfigClusterInput{
@@ -142,43 +153,48 @@ func ApplyClusterTemplateAndWait(ctx context.Context, input ApplyClusterTemplate
 	Expect(workloadClusterTemplate).ToNot(BeNil(), "Failed to get the cluster template")
 
 	log.Logf("Applying the cluster template yaml to the cluster")
-	Expect(input.ClusterProxy.Apply(ctx, workloadClusterTemplate)).ShouldNot(HaveOccurred())
+	Expect(input.ClusterProxy.Apply(ctx, workloadClusterTemplate)).To(Succeed())
 
 	log.Logf("Waiting for the cluster infrastructure to be provisioned")
-	cluster := framework.DiscoveryAndWaitForCluster(ctx, framework.DiscoveryAndWaitForClusterInput{
+	result.Cluster = framework.DiscoveryAndWaitForCluster(ctx, framework.DiscoveryAndWaitForClusterInput{
 		Getter:    input.ClusterProxy.GetClient(),
 		Namespace: input.ConfigCluster.Namespace,
 		Name:      input.ConfigCluster.ClusterName,
 	}, input.WaitForClusterIntervals...)
 
 	log.Logf("Waiting for control plane to be initialized")
-	controlPlane := framework.DiscoveryAndWaitForControlPlaneInitialized(ctx, framework.DiscoveryAndWaitForControlPlaneInitializedInput{
+	result.ControlPlane = framework.DiscoveryAndWaitForControlPlaneInitialized(ctx, framework.DiscoveryAndWaitForControlPlaneInitializedInput{
 		Lister:  input.ClusterProxy.GetClient(),
-		Cluster: cluster,
+		Cluster: result.Cluster,
 	}, input.WaitForControlPlaneIntervals...)
 
 	if input.CNIManifestPath != "" {
 		log.Logf("Installing a CNI plugin to the workload cluster")
-		workloadCluster := input.ClusterProxy.GetWorkloadCluster(context.TODO(), cluster.Namespace, cluster.Name)
+		workloadCluster := input.ClusterProxy.GetWorkloadCluster(ctx, result.Cluster.Namespace, result.Cluster.Name)
 
 		cniYaml, err := ioutil.ReadFile(input.CNIManifestPath)
 		Expect(err).ShouldNot(HaveOccurred())
 
-		Expect(workloadCluster.Apply(context.TODO(), cniYaml)).ShouldNot(HaveOccurred())
+		Expect(workloadCluster.Apply(ctx, cniYaml)).ShouldNot(HaveOccurred())
 	}
 
 	log.Logf("Waiting for control plane to be ready")
 	framework.WaitForControlPlaneAndMachinesReady(ctx, framework.WaitForControlPlaneAndMachinesReadyInput{
 		GetLister:    input.ClusterProxy.GetClient(),
-		Cluster:      cluster,
-		ControlPlane: controlPlane,
+		Cluster:      result.Cluster,
+		ControlPlane: result.ControlPlane,
 	}, input.WaitForControlPlaneIntervals...)
 
-	log.Logf("Waiting for the worker machines to be provisioned")
-	machineDeployments := framework.DiscoveryAndWaitForMachineDeployments(ctx, framework.DiscoveryAndWaitForMachineDeploymentsInput{
+	log.Logf("Waiting for the machine deployments to be provisioned")
+	result.MachineDeployments = framework.DiscoveryAndWaitForMachineDeployments(ctx, framework.DiscoveryAndWaitForMachineDeploymentsInput{
 		Lister:  input.ClusterProxy.GetClient(),
-		Cluster: cluster,
+		Cluster: result.Cluster,
 	}, input.WaitForMachineDeployments...)
 
-	return cluster, controlPlane, machineDeployments
+	log.Logf("Waiting for the machine pools to be provisioned")
+	result.MachinePools = framework.DiscoveryAndWaitForMachinePools(ctx, framework.DiscoveryAndWaitForMachinePoolsInput{
+		Getter:  input.ClusterProxy.GetClient(),
+		Lister:  input.ClusterProxy.GetClient(),
+		Cluster: result.Cluster,
+	}, input.WaitForMachineDeployments...)
 }

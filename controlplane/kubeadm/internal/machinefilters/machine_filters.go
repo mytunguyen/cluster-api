@@ -24,13 +24,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha4"
 	kubeadmv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/types/v1beta1"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
+	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type Func func(machine *clusterv1.Machine) bool
@@ -102,7 +102,7 @@ func InFailureDomains(failureDomains ...*string) Func {
 
 // OwnedMachines returns a filter to find all owned control plane machines.
 // Usage: managementCluster.GetMachinesForCluster(ctx, cluster, machinefilters.OwnedMachines(controlPlane))
-func OwnedMachines(owner controllerutil.Object) func(machine *clusterv1.Machine) bool {
+func OwnedMachines(owner client.Object) func(machine *clusterv1.Machine) bool {
 	return func(machine *clusterv1.Machine) bool {
 		if machine == nil {
 			return false
@@ -138,6 +138,16 @@ func HasDeletionTimestamp(machine *clusterv1.Machine) bool {
 		return false
 	}
 	return !machine.DeletionTimestamp.IsZero()
+}
+
+// HasUnhealthyCondition returns a filter to find all machines that have a MachineHealthCheckSucceeded condition set to False,
+// indicating a problem was detected on the machine, and the MachineOwnerRemediated condition set, indicating that KCP is
+// responsible of performing remediation as owner of the machine.
+func HasUnhealthyCondition(machine *clusterv1.Machine) bool {
+	if machine == nil {
+		return false
+	}
+	return conditions.IsFalse(machine, clusterv1.MachineHealthCheckSuccededCondition) && conditions.IsFalse(machine, clusterv1.MachineOwnerRemediatedCondition)
 }
 
 // IsReady returns a filter to find all machines with the ReadyCondition equals to True.

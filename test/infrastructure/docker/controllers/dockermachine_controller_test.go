@@ -24,11 +24,22 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/klog/klogr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	infrav1 "sigs.k8s.io/cluster-api/test/infrastructure/docker/api/v1alpha4"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
+)
+
+var (
+	clusterName   = "my-cluster"
+	dockerCluster = newDockerCluster(clusterName, "my-docker-cluster")
+	cluster       = newCluster(clusterName, dockerCluster)
+
+	dockerMachine = newDockerMachine("my-docker-machine-0", "my-machine-0")
+	machine       = newMachine(clusterName, "my-machine-0", dockerMachine)
+
+	anotherDockerMachine = newDockerMachine("my-docker-machine-1", "my-machine-1")
+	anotherMachine       = newMachine(clusterName, "my-machine-1", anotherDockerMachine)
 )
 
 func setupScheme() *runtime.Scheme {
@@ -45,27 +56,19 @@ func setupScheme() *runtime.Scheme {
 func TestDockerMachineReconciler_DockerClusterToDockerMachines(t *testing.T) {
 	g := NewWithT(t)
 
-	clusterName := "my-cluster"
-	dockerCluster := newDockerCluster(clusterName, "my-docker-cluster")
-	dockerMachine1 := newDockerMachine("my-docker-machine-0")
-	dockerMachine2 := newDockerMachine("my-docker-machine-1")
-	objects := []runtime.Object{
-		newCluster(clusterName),
+	objects := []client.Object{
+		cluster,
 		dockerCluster,
-		newMachine(clusterName, "my-machine-0", dockerMachine1),
-		newMachine(clusterName, "my-machine-1", dockerMachine2),
+		machine,
+		anotherMachine,
 		// Intentionally omitted
 		newMachine(clusterName, "my-machine-2", nil),
 	}
-	c := fake.NewFakeClientWithScheme(setupScheme(), objects...)
+	c := fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(objects...).Build()
 	r := DockerMachineReconciler{
 		Client: c,
-		Log:    klogr.New(),
 	}
-	mo := handler.MapObject{
-		Object: dockerCluster,
-	}
-	out := r.DockerClusterToDockerMachines(mo)
+	out := r.DockerClusterToDockerMachines(dockerCluster)
 	machineNames := make([]string, len(out))
 	for i := range out {
 		machineNames[i] = out[i].Name
@@ -74,13 +77,22 @@ func TestDockerMachineReconciler_DockerClusterToDockerMachines(t *testing.T) {
 	g.Expect(machineNames).To(ConsistOf("my-machine-0", "my-machine-1"))
 }
 
-func newCluster(clusterName string) *clusterv1.Cluster {
-	return &clusterv1.Cluster{
+func newCluster(clusterName string, dockerCluster *infrav1.DockerCluster) *clusterv1.Cluster {
+	cluster := &clusterv1.Cluster{
 		TypeMeta: metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: clusterName,
 		},
 	}
+	if dockerCluster != nil {
+		cluster.Spec.InfrastructureRef = &v1.ObjectReference{
+			Name:       dockerCluster.Name,
+			Namespace:  dockerCluster.Namespace,
+			Kind:       dockerCluster.Kind,
+			APIVersion: dockerCluster.GroupVersionKind().GroupVersion().String(),
+		}
+	}
+	return cluster
 }
 
 func newDockerCluster(clusterName, dockerName string) *infrav1.DockerCluster {
@@ -119,11 +131,20 @@ func newMachine(clusterName, machineName string, dockerMachine *infrav1.DockerMa
 	return machine
 }
 
-func newDockerMachine(name string) *infrav1.DockerMachine {
+func newDockerMachine(dockerMachineName, machineName string) *infrav1.DockerMachine {
 	return &infrav1.DockerMachine{
 		TypeMeta: metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
+			Name:            dockerMachineName,
+			ResourceVersion: "1",
+			Finalizers:      []string{infrav1.MachineFinalizer},
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: clusterv1.GroupVersion.String(),
+					Kind:       "Machine",
+					Name:       machineName,
+				},
+			},
 		},
 		Spec:   infrav1.DockerMachineSpec{},
 		Status: infrav1.DockerMachineStatus{},

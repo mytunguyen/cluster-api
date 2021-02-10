@@ -17,7 +17,6 @@ limitations under the License.
 package controllers
 
 import (
-	"context"
 	"testing"
 
 	. "github.com/onsi/gomega"
@@ -26,7 +25,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 )
 
 func Test_getActiveMachinesInCluster(t *testing.T) {
@@ -116,8 +115,8 @@ func Test_getActiveMachinesInCluster(t *testing.T) {
 
 			g.Expect(clusterv1.AddToScheme(scheme.Scheme)).To(Succeed())
 
-			c := fake.NewFakeClientWithScheme(scheme.Scheme, &ns1Cluster1, &ns1Cluster2, &ns1Cluster1Deleted, &ns2Cluster2)
-			got, err := getActiveMachinesInCluster(context.TODO(), c, tt.args.namespace, tt.args.name)
+			c := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(&ns1Cluster1, &ns1Cluster2, &ns1Cluster1Deleted, &ns2Cluster2).Build()
+			got, err := getActiveMachinesInCluster(ctx, c, tt.args.namespace, tt.args.name)
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
 			} else {

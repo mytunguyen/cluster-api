@@ -28,60 +28,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd"
 	fake2 "sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/etcd/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
-
-func TestWorkload_EtcdIsHealthy(t *testing.T) {
-	g := NewWithT(t)
-
-	workload := &Workload{
-		Client: &fakeClient{
-			get: map[string]interface{}{
-				"kube-system/etcd-test-1": etcdPod("etcd-test-1", withReadyOption),
-				"kube-system/etcd-test-2": etcdPod("etcd-test-2", withReadyOption),
-				"kube-system/etcd-test-3": etcdPod("etcd-test-3", withReadyOption),
-				"kube-system/etcd-test-4": etcdPod("etcd-test-4"),
-			},
-			list: &corev1.NodeList{
-				Items: []corev1.Node{
-					nodeNamed("test-1", withProviderID("my-provider-id-1")),
-					nodeNamed("test-2", withProviderID("my-provider-id-2")),
-					nodeNamed("test-3", withProviderID("my-provider-id-3")),
-					nodeNamed("test-4", withProviderID("my-provider-id-4")),
-				},
-			},
-		},
-		etcdClientGenerator: &fakeEtcdClientGenerator{
-			forNodesClient: &etcd.Client{
-				EtcdClient: &fake2.FakeEtcdClient{
-					EtcdEndpoints: []string{},
-					MemberListResponse: &clientv3.MemberListResponse{
-						Members: []*pb.Member{
-							{Name: "test-1", ID: uint64(1)},
-							{Name: "test-2", ID: uint64(2)},
-							{Name: "test-3", ID: uint64(3)},
-						},
-					},
-					AlarmResponse: &clientv3.AlarmResponse{
-						Alarms: []*pb.AlarmMember{},
-					},
-				},
-			},
-		},
-	}
-	ctx := context.Background()
-	health, err := workload.EtcdIsHealthy(ctx)
-	g.Expect(err).NotTo(HaveOccurred())
-
-	for _, err := range health {
-		g.Expect(err).NotTo(HaveOccurred())
-	}
-}
 
 func TestUpdateEtcdVersionInKubeadmConfigMap(t *testing.T) {
 	kubeadmConfig := &corev1.ConfigMap{
@@ -108,7 +61,7 @@ etcd:
 
 	tests := []struct {
 		name                  string
-		objs                  []runtime.Object
+		objs                  []client.Object
 		imageRepo             string
 		imageTag              string
 		expectErr             bool
@@ -122,7 +75,7 @@ etcd:
 		{
 			name:      "updates the config map",
 			expectErr: false,
-			objs:      []runtime.Object{kubeadmConfig},
+			objs:      []client.Object{kubeadmConfig},
 			imageRepo: "gcr.io/imgRepo",
 			imageTag:  "v1.0.1-sometag.1",
 			expectedClusterConfig: `apiVersion: kubeadm.k8s.io/v1beta2
@@ -139,18 +92,17 @@ kind: ClusterConfiguration
 			expectErr: false,
 			imageRepo: "gcr.io/k8s/etcd",
 			imageTag:  "0.10.9",
-			objs:      []runtime.Object{kubeadmConfig},
+			objs:      []client.Object{kubeadmConfig},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			fakeClient := fake.NewFakeClientWithScheme(scheme, tt.objs...)
+			fakeClient := fake.NewClientBuilder().WithObjects(tt.objs...).Build()
 			w := &Workload{
 				Client: fakeClient,
 			}
-			ctx := context.TODO()
 			err := w.UpdateEtcdVersionInKubeadmConfigMap(ctx, tt.imageRepo, tt.imageTag)
 			if tt.expectErr {
 				g.Expect(err).To(HaveOccurred())
@@ -201,7 +153,7 @@ func TestRemoveEtcdMemberForMachine(t *testing.T) {
 		name                string
 		machine             *clusterv1.Machine
 		etcdClientGenerator etcdClientFor
-		objs                []runtime.Object
+		objs                []client.Object
 		expectErr           bool
 	}{
 		{
@@ -221,20 +173,20 @@ func TestRemoveEtcdMemberForMachine(t *testing.T) {
 		{
 			name:      "returns an error if there are less than 2 control plane nodes",
 			machine:   machine,
-			objs:      []runtime.Object{cp1},
+			objs:      []client.Object{cp1},
 			expectErr: true,
 		},
 		{
 			name:                "returns an error if it fails to create the etcd client",
 			machine:             machine,
-			objs:                []runtime.Object{cp1, cp2},
+			objs:                []client.Object{cp1, cp2},
 			etcdClientGenerator: &fakeEtcdClientGenerator{forNodesErr: errors.New("no client")},
 			expectErr:           true,
 		},
 		{
 			name:    "returns an error if the client errors getting etcd members",
 			machine: machine,
-			objs:    []runtime.Object{cp1, cp2},
+			objs:    []client.Object{cp1, cp2},
 			etcdClientGenerator: &fakeEtcdClientGenerator{
 				forNodesClient: &etcd.Client{
 					EtcdClient: &fake2.FakeEtcdClient{
@@ -247,7 +199,7 @@ func TestRemoveEtcdMemberForMachine(t *testing.T) {
 		{
 			name:    "returns an error if the client errors removing the etcd member",
 			machine: machine,
-			objs:    []runtime.Object{cp1, cp2},
+			objs:    []client.Object{cp1, cp2},
 			etcdClientGenerator: &fakeEtcdClientGenerator{
 				forNodesClient: &etcd.Client{
 					EtcdClient: &fake2.FakeEtcdClient{
@@ -270,7 +222,7 @@ func TestRemoveEtcdMemberForMachine(t *testing.T) {
 		{
 			name:    "removes the member from etcd",
 			machine: machine,
-			objs:    []runtime.Object{cp1, cp2},
+			objs:    []client.Object{cp1, cp2},
 			etcdClientGenerator: &fakeEtcdClientGenerator{
 				forNodesClient: &etcd.Client{
 					EtcdClient: &fake2.FakeEtcdClient{
@@ -294,12 +246,11 @@ func TestRemoveEtcdMemberForMachine(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			fakeClient := fake.NewFakeClientWithScheme(scheme, tt.objs...)
+			fakeClient := fake.NewClientBuilder().WithObjects(tt.objs...).Build()
 			w := &Workload{
 				Client:              fakeClient,
 				etcdClientGenerator: tt.etcdClientGenerator,
 			}
-			ctx := context.TODO()
 			err := w.RemoveEtcdMemberForMachine(ctx, tt.machine)
 			if tt.expectErr {
 				g.Expect(err).To(HaveOccurred())
@@ -384,7 +335,6 @@ func TestForwardEtcdLeadership(t *testing.T) {
 					Client:              tt.k8sClient,
 					etcdClientGenerator: tt.etcdClientGenerator,
 				}
-				ctx := context.TODO()
 				err := w.ForwardEtcdLeadership(ctx, tt.machine, tt.leaderCandidate)
 				if tt.expectErr {
 					g.Expect(err).To(HaveOccurred())
@@ -420,7 +370,6 @@ func TestForwardEtcdLeadership(t *testing.T) {
 			}},
 			etcdClientGenerator: etcdClientGenerator,
 		}
-		ctx := context.TODO()
 		err := w.ForwardEtcdLeadership(ctx, defaultMachine(), defaultMachine())
 		g.Expect(err).ToNot(HaveOccurred())
 		g.Expect(fakeEtcdClient.MovedLeader).To(BeEquivalentTo(0))
@@ -493,7 +442,6 @@ func TestForwardEtcdLeadership(t *testing.T) {
 						Items: []corev1.Node{nodeNamed("leader-node"), nodeNamed("other-node"), nodeNamed("candidate-node")},
 					}},
 				}
-				ctx := context.TODO()
 				err := w.ForwardEtcdLeadership(ctx, currentLeader, tt.leaderCandidate)
 				if tt.expectErr {
 					g.Expect(err).To(HaveOccurred())
@@ -555,7 +503,8 @@ kind: ClusterStatus`,
 
 	tests := []struct {
 		name                string
-		objs                []runtime.Object
+		objs                []client.Object
+		nodes               []string
 		etcdClientGenerator etcdClientFor
 		expectErr           bool
 		assert              func(*WithT)
@@ -563,8 +512,9 @@ kind: ClusterStatus`,
 		{
 			// the node to be removed is ip-10-0-0-3.ec2.internal since the
 			// other two have nodes
-			name: "successfully removes the etcd member without a node and removes the node from kubeadm config",
-			objs: []runtime.Object{node1.DeepCopy(), node2.DeepCopy(), kubeadmConfig.DeepCopy()},
+			name:  "successfully removes the etcd member without a node and removes the node from kubeadm config",
+			objs:  []client.Object{node1.DeepCopy(), node2.DeepCopy(), kubeadmConfig.DeepCopy()},
+			nodes: []string{node1.Name, node2.Name},
 			etcdClientGenerator: &fakeEtcdClientGenerator{
 				forNodesClient: &etcd.Client{
 					EtcdClient: fakeEtcdClient,
@@ -576,8 +526,9 @@ kind: ClusterStatus`,
 			},
 		},
 		{
-			name: "return error if there aren't enough control plane nodes",
-			objs: []runtime.Object{node1.DeepCopy(), kubeadmConfig.DeepCopy()},
+			name:  "return error if there aren't enough control plane nodes",
+			objs:  []client.Object{node1.DeepCopy(), kubeadmConfig.DeepCopy()},
+			nodes: []string{node1.Name},
 			etcdClientGenerator: &fakeEtcdClientGenerator{
 				forNodesClient: &etcd.Client{
 					EtcdClient: fakeEtcdClient,
@@ -593,7 +544,7 @@ kind: ClusterStatus`,
 
 			for _, o := range tt.objs {
 				g.Expect(testEnv.CreateObj(ctx, o)).To(Succeed())
-				defer func(do runtime.Object) {
+				defer func(do client.Object) {
 					g.Expect(testEnv.Cleanup(ctx, do)).To(Succeed())
 				}(o)
 			}
@@ -603,7 +554,7 @@ kind: ClusterStatus`,
 				etcdClientGenerator: tt.etcdClientGenerator,
 			}
 			ctx := context.TODO()
-			err := w.ReconcileEtcdMembers(ctx)
+			_, err := w.ReconcileEtcdMembers(ctx, tt.nodes)
 			if tt.expectErr {
 				g.Expect(err).To(HaveOccurred())
 				return
@@ -619,47 +570,22 @@ kind: ClusterStatus`,
 }
 
 type fakeEtcdClientGenerator struct {
-	forNodesClient  *etcd.Client
-	forLeaderClient *etcd.Client
-	forNodesErr     error
-	forLeaderErr    error
+	forNodesClient     *etcd.Client
+	forNodesClientFunc func([]string) (*etcd.Client, error)
+	forLeaderClient    *etcd.Client
+	forNodesErr        error
+	forLeaderErr       error
 }
 
-func (c *fakeEtcdClientGenerator) forNodes(_ context.Context, _ []corev1.Node) (*etcd.Client, error) {
+func (c *fakeEtcdClientGenerator) forFirstAvailableNode(_ context.Context, n []string) (*etcd.Client, error) {
+	if c.forNodesClientFunc != nil {
+		return c.forNodesClientFunc(n)
+	}
 	return c.forNodesClient, c.forNodesErr
 }
 
-func (c *fakeEtcdClientGenerator) forLeader(_ context.Context, _ []corev1.Node) (*etcd.Client, error) {
+func (c *fakeEtcdClientGenerator) forLeader(_ context.Context, _ []string) (*etcd.Client, error) {
 	return c.forLeaderClient, c.forLeaderErr
-}
-
-type podOption func(*corev1.Pod)
-
-func etcdPod(name string, options ...podOption) *corev1.Pod {
-	p := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: metav1.NamespaceSystem,
-		},
-	}
-	for _, opt := range options {
-		opt(p)
-	}
-	return p
-}
-func withReadyOption(pod *corev1.Pod) {
-	readyCondition := corev1.PodCondition{
-		Type:   corev1.PodReady,
-		Status: corev1.ConditionTrue,
-	}
-	pod.Status.Conditions = append(pod.Status.Conditions, readyCondition)
-}
-
-func withProviderID(pi string) func(corev1.Node) corev1.Node {
-	return func(node corev1.Node) corev1.Node {
-		node.Spec.ProviderID = pi
-		return node
-	}
 }
 
 func defaultMachine(transforms ...func(m *clusterv1.Machine)) *clusterv1.Machine {
@@ -674,4 +600,13 @@ func defaultMachine(transforms ...func(m *clusterv1.Machine)) *clusterv1.Machine
 		t(m)
 	}
 	return m
+}
+
+func nodeNamed(name string) corev1.Node {
+	node := corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+	}
+	return node
 }

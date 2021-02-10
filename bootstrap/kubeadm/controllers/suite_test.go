@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"sigs.k8s.io/cluster-api/test/helpers"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/envtest/printer"
 	// +kubebuilder:scaffold:imports
 )
@@ -32,6 +33,7 @@ import (
 
 var (
 	testEnv *helpers.TestEnvironment
+	ctx     = ctrl.SetupSignalHandler()
 )
 
 func TestAPIs(t *testing.T) {
@@ -42,17 +44,17 @@ func TestAPIs(t *testing.T) {
 		[]Reporter{printer.NewlineReporter{}})
 }
 
-var _ = BeforeSuite(func(done Done) {
+var _ = BeforeSuite(func() {
 	By("bootstrapping test environment")
 	testEnv = helpers.NewTestEnvironment()
 
 	By("starting the manager")
 	go func() {
 		defer GinkgoRecover()
-		Expect(testEnv.StartManager()).To(Succeed())
+		Expect(testEnv.StartManager(ctx)).To(Succeed())
 	}()
 
-	close(done)
+	<-testEnv.Manager.Elected()
 }, 60)
 
 var _ = AfterSuite(func() {

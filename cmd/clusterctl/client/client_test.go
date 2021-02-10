@@ -29,9 +29,11 @@ import (
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/cluster"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/repository"
+	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/tree"
 	yaml "sigs.k8s.io/cluster-api/cmd/clusterctl/client/yamlprocessor"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/scheme"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // TestNewFakeClient is a fake test to document fakeClient usage
@@ -115,6 +117,22 @@ func (f fakeClient) ApplyUpgrade(options ApplyUpgradeOptions) error {
 
 func (f fakeClient) ProcessYAML(options ProcessYAMLOptions) (YamlPrinter, error) {
 	return f.internalClient.ProcessYAML(options)
+}
+
+func (f fakeClient) RolloutRestart(options RolloutOptions) error {
+	return f.internalClient.RolloutRestart(options)
+}
+
+func (f fakeClient) DescribeCluster(options DescribeClusterOptions) (*tree.ObjectTree, error) {
+	return f.internalClient.DescribeCluster(options)
+}
+
+func (f fakeClient) RolloutPause(options RolloutOptions) error {
+	return f.internalClient.RolloutPause(options)
+}
+
+func (f fakeClient) RolloutResume(options RolloutOptions) error {
+	return f.internalClient.RolloutResume(options)
 }
 
 // newFakeClient returns a clusterctl client that allows to execute tests on a set of fake config, fake repositories and fake clusters.
@@ -253,8 +271,8 @@ func (f fakeClusterClient) Proxy() cluster.Proxy {
 	return f.fakeProxy
 }
 
-func (f *fakeClusterClient) CertManager() cluster.CertManagerClient {
-	return f.certManager
+func (f *fakeClusterClient) CertManager() (cluster.CertManagerClient, error) {
+	return f.certManager, nil
 }
 
 func (f fakeClusterClient) ProviderComponents() cluster.ComponentsClient {
@@ -288,7 +306,7 @@ func (f *fakeClusterClient) WorkloadCluster() cluster.WorkloadCluster {
 	return f.internalclient.WorkloadCluster()
 }
 
-func (f *fakeClusterClient) WithObjs(objs ...runtime.Object) *fakeClusterClient {
+func (f *fakeClusterClient) WithObjs(objs ...client.Object) *fakeClusterClient {
 	f.fakeProxy.WithObjs(objs...)
 	return f
 }

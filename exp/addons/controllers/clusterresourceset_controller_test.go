@@ -20,17 +20,16 @@ import (
 	"fmt"
 	"time"
 
-	"sigs.k8s.io/cluster-api/util"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha4"
+	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -40,21 +39,24 @@ const (
 
 var _ = Describe("ClusterResourceSet Reconciler", func() {
 
+	var clusterResourceSetName string
+
 	var testCluster *clusterv1.Cluster
 	var clusterName string
 
 	var configmapName = "test-configmap"
-	var configmap2Name = "test-configmap2"
+	var secretName = "test-secret"
 
 	BeforeEach(func() {
+		clusterResourceSetName = fmt.Sprintf("clusterresourceset-%s", util.RandomString(6))
+
 		clusterName = fmt.Sprintf("cluster-%s", util.RandomString(6))
 		testCluster = &clusterv1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: defaultNamespaceName}}
 
 		By("Creating the Cluster")
 		Expect(testEnv.Create(ctx, testCluster)).To(Succeed())
 		By("Creating the remote Cluster kubeconfig")
-		Expect(testEnv.CreateKubeconfigSecret(testCluster)).To(Succeed())
-
+		Expect(testEnv.CreateKubeconfigSecret(ctx, testCluster)).To(Succeed())
 		testConfigmap := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      configmapName,
@@ -68,13 +70,14 @@ kind: ConfigMap
 apiVersion: v1`,
 			},
 		}
-
-		testConfigmap2 := &corev1.ConfigMap{
+		testEnv.Create(ctx, testConfigmap)
+		testSecret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      configmap2Name,
+				Name:      secretName,
 				Namespace: defaultNamespaceName,
 			},
-			Data: map[string]string{
+			Type: "addons.cluster.x-k8s.io/resource-set",
+			StringData: map[string]string{
 				"cm": `metadata:
 kind: ConfigMap
 apiVersion: v1
@@ -83,9 +86,9 @@ metadata:
  namespace: default`,
 			},
 		}
-		By("Creating 2 ConfigMaps with ConfigMap in their data field")
+		By("Creating a Secret and a ConfigMap with ConfigMap in their data field")
 		testEnv.Create(ctx, testConfigmap)
-		testEnv.Create(ctx, testConfigmap2)
+		testEnv.Create(ctx, testSecret)
 	})
 	AfterEach(func() {
 		By("Deleting the Kubeconfigsecret")
@@ -99,7 +102,7 @@ metadata:
 
 		clusterResourceSetInstance := &addonsv1.ClusterResourceSet{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-clusterresourceset",
+				Name:      clusterResourceSetName,
 				Namespace: defaultNamespaceName,
 			},
 		}
@@ -129,14 +132,14 @@ metadata:
 		By("Creating a ClusterResourceSet instance that has same labels as selector")
 		clusterResourceSetInstance := &addonsv1.ClusterResourceSet{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-clusterresourceset",
+				Name:      clusterResourceSetName,
 				Namespace: defaultNamespaceName,
 			},
 			Spec: addonsv1.ClusterResourceSetSpec{
 				ClusterSelector: metav1.LabelSelector{
 					MatchLabels: labels,
 				},
-				Resources: []addonsv1.ResourceRef{{Name: configmapName, Kind: "ConfigMap"}, {Name: configmap2Name, Kind: "ConfigMap"}},
+				Resources: []addonsv1.ResourceRef{{Name: configmapName, Kind: "ConfigMap"}, {Name: secretName, Kind: "Secret"}},
 			},
 		}
 		// Create the ClusterResourceSet.
@@ -181,7 +184,7 @@ metadata:
 
 		clusterResourceSetInstance := &addonsv1.ClusterResourceSet{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-clusterresourceset",
+				Name:      clusterResourceSetName,
 				Namespace: defaultNamespaceName,
 			},
 			Spec: addonsv1.ClusterResourceSetSpec{
@@ -243,7 +246,7 @@ metadata:
 
 		clusterResourceSetInstance := &addonsv1.ClusterResourceSet{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-clusterresourceset",
+				Name:      clusterResourceSetName,
 				Namespace: defaultNamespaceName,
 			},
 			Spec: addonsv1.ClusterResourceSetSpec{
@@ -293,6 +296,15 @@ metadata:
 			Data: map[string]string{},
 		}
 		Expect(testEnv.Create(ctx, testConfigmap)).To(Succeed())
+		cmKey := client.ObjectKey{
+			Namespace: defaultNamespaceName,
+			Name:      newCMName,
+		}
+		Eventually(func() bool {
+			m := &corev1.ConfigMap{}
+			err := testEnv.Get(ctx, cmKey, m)
+			return err == nil
+		}, timeout).Should(BeTrue())
 
 		// When the ConfigMap resource is created, CRS should get reconciled immediately.
 		Eventually(func() bool {
@@ -317,7 +329,7 @@ metadata:
 		By("Creating a ClusterResourceSet instance that has same labels as selector")
 		clusterResourceSetInstance2 := &addonsv1.ClusterResourceSet{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-clusterresourceset",
+				Name:      clusterResourceSetName,
 				Namespace: defaultNamespaceName,
 			},
 			Spec: addonsv1.ClusterResourceSetSpec{
@@ -340,7 +352,7 @@ metadata:
 				ClusterSelector: metav1.LabelSelector{
 					MatchLabels: labels,
 				},
-				Resources: []addonsv1.ResourceRef{{Name: configmapName, Kind: "ConfigMap"}, {Name: configmap2Name, Kind: "ConfigMap"}},
+				Resources: []addonsv1.ResourceRef{{Name: configmapName, Kind: "ConfigMap"}, {Name: secretName, Kind: "Secret"}},
 			},
 		}
 		// Create the ClusterResourceSet.
@@ -396,7 +408,7 @@ metadata:
 		labels := map[string]string{"foo": "bar"}
 		clusterResourceSetInstance := &addonsv1.ClusterResourceSet{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:              "test-clusterresourceset",
+				Name:              clusterResourceSetName,
 				Namespace:         defaultNamespaceName,
 				Finalizers:        []string{addonsv1.ClusterResourceSetFinalizer},
 				DeletionTimestamp: &dt,

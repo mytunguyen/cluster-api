@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.etcd.io/etcd/clientv3"
@@ -27,6 +28,9 @@ import (
 	"google.golang.org/grpc"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/proxy"
 )
+
+// etcdTimeout is the maximum time any individual call to the etcd client through the backoff adapter will take.
+const etcdTimeout = 2 * time.Second
 
 // GRPCDial is a function that creates a connection to a given endpoint.
 type GRPCDial func(ctx context.Context, addr string) (net.Conn, error)
@@ -49,6 +53,7 @@ type Client struct {
 	EtcdClient etcd
 	Endpoint   string
 	LeaderID   uint64
+	Errors     []string
 }
 
 // MemberAlarm represents an alarm type association with a cluster member.
@@ -72,6 +77,13 @@ const (
 	// AlarmCorrupt denotes that the cluster member has corrupted data.
 	AlarmCorrupt
 )
+
+// AlarmTypeName provides a text translation for AlarmType codes.
+var AlarmTypeName = map[AlarmType]string{
+	AlarmOk:      "NONE",
+	AlarmNoSpace: "NOSPACE",
+	AlarmCorrupt: "CORRUPT",
+}
 
 // Adapted from kubeadm
 
@@ -150,6 +162,7 @@ func newEtcdClient(ctx context.Context, etcdClient etcd) (*Client, error) {
 		Endpoint:   endpoints[0],
 		EtcdClient: etcdClient,
 		LeaderID:   status.Leader,
+		Errors:     status.Errors,
 	}, nil
 }
 

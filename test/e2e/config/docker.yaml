@@ -17,11 +17,11 @@ images:
   loadBehavior: mustLoad
 - name: gcr.io/k8s-staging-cluster-api/capd-manager-amd64:dev
   loadBehavior: mustLoad
-- name: quay.io/jetstack/cert-manager-cainjector:v0.16.1
+- name: quay.io/jetstack/cert-manager-cainjector:v1.1.0
   loadBehavior: tryLoad
-- name: quay.io/jetstack/cert-manager-webhook:v0.16.1
+- name: quay.io/jetstack/cert-manager-webhook:v1.1.0
   loadBehavior: tryLoad
-- name: quay.io/jetstack/cert-manager-controller:v0.16.1
+- name: quay.io/jetstack/cert-manager-controller:v1.1.0
   loadBehavior: tryLoad
 
 providers:
@@ -31,64 +31,83 @@ providers:
   versions:
   - name: v0.3.0
   # Use manifest from source files
-    value: ../../../config
+    value: ../../../config/default
     replacements:
-    - old: --metrics-addr=127.0.0.1:8080
-      new: --metrics-addr=:8080
+    - old: --metrics-bind-addr=127.0.0.1:8080
+      new: --metrics-bind-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v1alpha4/metadata.yaml"
 
 - name: kubeadm
   type: BootstrapProvider
   versions:
   - name: v0.3.0
   # Use manifest from source files
-    value: ../../../bootstrap/kubeadm/config
+    value: ../../../bootstrap/kubeadm/config/default
     replacements:
-    - old: --metrics-addr=127.0.0.1:8080
-      new: --metrics-addr=:8080
+    - old: --metrics-bind-addr=127.0.0.1:8080
+      new: --metrics-bind-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v1alpha4/metadata.yaml"
 
 - name: kubeadm
   type: ControlPlaneProvider
   versions:
   - name: v0.3.0
   # Use manifest from source files
-    value: ../../../controlplane/kubeadm/config
+    value: ../../../controlplane/kubeadm/config/default
     replacements:
-    - old: --metrics-addr=127.0.0.1:8080
-      new: --metrics-addr=:8080
+    - old: --metrics-bind-addr=127.0.0.1:8080
+      new: --metrics-bind-addr=:8080
+    files:
+    - sourcePath: "../data/shared/v1alpha4/metadata.yaml"
 
 - name: docker
   type: InfrastructureProvider
   versions:
   - name: v0.3.0
   # Use manifest from source files
-    value: ../../../test/infrastructure/docker/config
+    value: ../../../test/infrastructure/docker/config/default
     replacements:
-    - old: --metrics-addr=127.0.0.1:8080
-      new: --metrics-addr=:8080
-  files:
-  # Add cluster templates
-  - sourcePath: "../data/infrastructure-docker/cluster-template.yaml"
-  - sourcePath: "../data/infrastructure-docker/cluster-template-mhc.yaml"
-  - sourcePath: "../data/infrastructure-docker/cluster-template-kcp-adoption.yaml"
+    - old: --metrics-bind-addr=127.0.0.1:8080
+      new: --metrics-bind-addr=:8080
+    files:
+    # Add cluster templates
+    - sourcePath: "../data/infrastructure-docker/v1alpha4/cluster-template.yaml"
+    - sourcePath: "../data/infrastructure-docker/v1alpha4/cluster-template-md-remediation.yaml"
+    - sourcePath: "../data/infrastructure-docker/v1alpha4/cluster-template-kcp-remediation.yaml"
+    - sourcePath: "../data/infrastructure-docker/v1alpha4/cluster-template-kcp-adoption.yaml"
+    - sourcePath: "../data/infrastructure-docker/v1alpha4/cluster-template-machine-pool.yaml"
+    - sourcePath: "../data/infrastructure-docker/v1alpha4/cluster-template-node-drain.yaml"
+    - sourcePath: "../data/shared/v1alpha4/metadata.yaml"
 
 variables:
-  KUBERNETES_VERSION: "v1.18.2"
-  ETCD_VERSION_UPGRADE_TO: "3.4.3-0"
-  COREDNS_VERSION_UPGRADE_TO: "1.6.7"
-  KUBERNETES_VERSION_UPGRADE_TO: "v1.18.2"
-  KUBERNETES_VERSION_UPGRADE_FROM: "v1.17.2"
+  # default variables for the e2e test; those values could be overridden via env variables, thus
+  # allowing the same e2e config file to be re-used in different prow jobs e.g. each one with a K8s version permutation
+  KUBERNETES_VERSION: "v1.19.1"
+  ETCD_VERSION_UPGRADE_TO: "3.4.9-0"
+  COREDNS_VERSION_UPGRADE_TO: "1.7.0"
+  KUBERNETES_VERSION_UPGRADE_TO: "v1.19.1"
+  KUBERNETES_VERSION_UPGRADE_FROM: "v1.18.2"
   DOCKER_SERVICE_DOMAIN: "cluster.local"
   DOCKER_SERVICE_CIDRS: "10.128.0.0/12"
   # IMPORTANT! This values should match the one used by the CNI provider
   DOCKER_POD_CIDRS: "192.168.0.0/16"
   CNI: "./data/cni/kindnet/kindnet.yaml"
   EXP_CLUSTER_RESOURCE_SET: "true"
+  EXP_MACHINE_POOL: "true"
+  KUBETEST_CONFIGURATION: "./data/kubetest/conformance.yaml"
+  NODE_DRAIN_TIMEOUT: "60s"
 
 intervals:
   default/wait-controllers: ["3m", "10s"]
   default/wait-cluster: ["5m", "10s"]
   default/wait-control-plane: ["10m", "10s"]
   default/wait-worker-nodes: ["5m", "10s"]
+  default/wait-machine-pool-nodes: ["5m", "10s"]
   default/wait-delete-cluster: ["3m", "10s"]
   default/wait-machine-upgrade: ["20m", "10s"]
+  default/wait-machine-pool-upgrade: ["5m", "10s"]
   default/wait-machine-remediation: ["5m", "10s"]
+  node-drain/wait-deployment-available: ["3m", "10s"]
+  node-drain/wait-control-plane: ["15m", "10s"]

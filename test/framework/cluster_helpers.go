@@ -24,10 +24,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/test/framework/internal/log"
-	"sigs.k8s.io/cluster-api/test/framework/options"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -36,7 +34,7 @@ import (
 type CreateClusterInput struct {
 	Creator      Creator
 	Cluster      *clusterv1.Cluster
-	InfraCluster runtime.Object
+	InfraCluster client.Object
 }
 
 // CreateCluster will create the Cluster and InfraCluster objects.
@@ -144,9 +142,6 @@ type DeleteClusterInput struct {
 
 // DeleteCluster deletes the cluster and waits for everything the cluster owned to actually be gone.
 func DeleteCluster(ctx context.Context, input DeleteClusterInput) {
-	if options.SkipResourceCleanup {
-		return
-	}
 	By(fmt.Sprintf("Deleting cluster %s", input.Cluster.GetName()))
 	Expect(input.Deleter.Delete(ctx, input.Cluster)).To(Succeed())
 }
@@ -159,9 +154,6 @@ type WaitForClusterDeletedInput struct {
 
 // WaitForClusterDeleted waits until the cluster object has been deleted.
 func WaitForClusterDeleted(ctx context.Context, input WaitForClusterDeletedInput, intervals ...interface{}) {
-	if options.SkipResourceCleanup {
-		return
-	}
 	By(fmt.Sprintf("Waiting for cluster %s to be deleted", input.Cluster.GetName()))
 	Eventually(func() bool {
 		cluster := &clusterv1.Cluster{}

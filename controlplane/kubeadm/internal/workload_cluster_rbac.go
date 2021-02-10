@@ -26,7 +26,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -48,12 +48,9 @@ const (
 )
 
 // EnsureResource creates a resoutce if the target resource doesn't exist. If the resource exists already, this function will ignore the resource instead.
-func (w *Workload) EnsureResource(ctx context.Context, obj runtime.Object) error {
-	testObj := obj.DeepCopyObject()
-	key, err := ctrlclient.ObjectKeyFromObject(obj)
-	if err != nil {
-		return errors.Wrap(err, "unable to derive key for resource")
-	}
+func (w *Workload) EnsureResource(ctx context.Context, obj client.Object) error {
+	testObj := obj.DeepCopyObject().(client.Object)
+	key := ctrlclient.ObjectKeyFromObject(obj)
 	if err := w.Client.Get(ctx, key, testObj); err != nil && !apierrors.IsNotFound(err) {
 		return errors.Wrapf(err, "failed to determine if resource %s/%s already exists", key.Namespace, key.Name)
 	} else if err == nil {

@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 )
 
 // IsPaused returns true if the Cluster is paused or the object has the `paused` annotation.
@@ -48,4 +48,20 @@ func HasWithPrefix(prefix string, annotations map[string]string) bool {
 		}
 	}
 	return false
+}
+
+// AddAnnotations sets the desired annotations on the object and returns true if the annotations have changed.
+func AddAnnotations(o metav1.Object, desired map[string]string) bool {
+	annotations := o.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	hasChanged := false
+	for k, v := range desired {
+		if cur, ok := annotations[k]; !ok || cur != v {
+			annotations[k] = v
+			hasChanged = true
+		}
+	}
+	return hasChanged
 }

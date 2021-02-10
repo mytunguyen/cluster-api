@@ -23,14 +23,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	fakebootstrap "sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test/providers/bootstrap"
 	fakecontrolplane "sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test/providers/controlplane"
 	fakeexternal "sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test/providers/external"
 	fakeinfrastructure "sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test/providers/infrastructure"
-	addonsv1alpha3 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha3"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1alpha3"
+	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha4"
+	expv1 "sigs.k8s.io/cluster-api/exp/api/v1alpha4"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -38,7 +38,7 @@ import (
 type FakeProxy struct {
 	cs        client.Client
 	namespace string
-	objs      []runtime.Object
+	objs      []client.Object
 }
 
 var (
@@ -50,7 +50,7 @@ func init() {
 	_ = clusterctlv1.AddToScheme(FakeScheme)
 	_ = clusterv1.AddToScheme(FakeScheme)
 	_ = expv1.AddToScheme(FakeScheme)
-	_ = addonsv1alpha3.AddToScheme(FakeScheme)
+	_ = addonsv1.AddToScheme(FakeScheme)
 	_ = apiextensionslv1.AddToScheme(FakeScheme)
 
 	_ = fakebootstrap.AddToScheme(FakeScheme)
@@ -75,8 +75,7 @@ func (f *FakeProxy) NewClient() (client.Client, error) {
 	if f.cs != nil {
 		return f.cs, nil
 	}
-	f.cs = fake.NewFakeClientWithScheme(FakeScheme, f.objs...)
-
+	f.cs = fake.NewClientBuilder().WithScheme(FakeScheme).WithObjects(f.objs...).Build()
 	return f.cs, nil
 }
 
@@ -129,7 +128,7 @@ func NewFakeProxy() *FakeProxy {
 	}
 }
 
-func (f *FakeProxy) WithObjs(objs ...runtime.Object) *FakeProxy {
+func (f *FakeProxy) WithObjs(objs ...client.Object) *FakeProxy {
 	f.objs = append(f.objs, objs...)
 	return f
 }
@@ -150,8 +149,9 @@ func (f *FakeProxy) WithProviderInventory(name string, providerType clusterctlv1
 			Kind:       "Provider",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: targetNamespace,
-			Name:      clusterctlv1.ManifestLabel(name, providerType),
+			ResourceVersion: "1",
+			Namespace:       targetNamespace,
+			Name:            clusterctlv1.ManifestLabel(name, providerType),
 			Labels: map[string]string{
 				clusterctlv1.ClusterctlLabelName:     "",
 				clusterv1.ProviderLabelName:          clusterctlv1.ManifestLabel(name, providerType),

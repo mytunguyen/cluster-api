@@ -27,8 +27,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	addonsv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha4"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -77,10 +77,10 @@ func TestGetorCreateClusterResourceSetBinding(t *testing.T) {
 		},
 	}
 
-	c := fake.NewFakeClientWithScheme(
-		scheme,
-		testClusterResourceSetBinding,
-	)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(testClusterResourceSetBinding).
+		Build()
 	r := &ClusterResourceSetReconciler{
 		Client: c,
 	}
@@ -153,10 +153,10 @@ func TestGetSecretFromNamespacedName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gs := NewWithT(t)
 
-			c := fake.NewFakeClientWithScheme(
-				scheme,
-				existingSecret,
-			)
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(existingSecret).
+				Build()
 
 			got, err := getSecret(context.TODO(), c, tt.secretName)
 
@@ -210,10 +210,10 @@ func TestGetConfigMapFromNamespacedName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gs := NewWithT(t)
 
-			c := fake.NewFakeClientWithScheme(
-				scheme,
-				existingConfigMap,
-			)
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(existingConfigMap).
+				Build()
 
 			got, err := getConfigMap(context.TODO(), c, tt.configMapName)
 

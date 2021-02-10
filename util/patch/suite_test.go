@@ -17,16 +17,15 @@ limitations under the License.
 package patch
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	"sigs.k8s.io/controller-runtime/pkg/envtest/printer"
-
 	"sigs.k8s.io/cluster-api/test/helpers"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/envtest/printer"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -39,7 +38,7 @@ const (
 
 var (
 	testEnv *helpers.TestEnvironment
-	ctx     = context.Background()
+	ctx     = ctrl.SetupSignalHandler()
 )
 
 func TestPatch(t *testing.T) {
@@ -50,17 +49,17 @@ func TestPatch(t *testing.T) {
 		[]Reporter{printer.NewlineReporter{}})
 }
 
-var _ = BeforeSuite(func(done Done) {
+var _ = BeforeSuite(func() {
 	By("bootstrapping test environment")
 	testEnv = helpers.NewTestEnvironment()
 
 	By("starting the manager")
 	go func() {
 		defer GinkgoRecover()
-		Expect(testEnv.StartManager()).To(Succeed())
+		Expect(testEnv.StartManager(ctx)).To(Succeed())
 	}()
 
-	close(done)
+	<-testEnv.Manager.Elected()
 }, 60)
 
 var _ = AfterSuite(func() {

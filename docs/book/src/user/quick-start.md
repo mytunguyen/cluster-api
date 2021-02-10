@@ -22,7 +22,7 @@ Choose one of the options below:
 
 1. **Existing Management Cluster**
 
-For production use-cases a "real" Kubernetes cluster should be used with appropriate backup and DR policies and procedures in place. The Kubernetes cluster must be at least v1.16+.
+For production use-cases a "real" Kubernetes cluster should be used with appropriate backup and DR policies and procedures in place. The Kubernetes cluster must be at least v1.19.1.
 
 ```bash
 export KUBECONFIG=<...>
@@ -36,35 +36,19 @@ export KUBECONFIG=<...>
 
 [kind] is not designed for production use.
 
-**Minimum [kind] supported version**: v0.7.0
+**Minimum [kind] supported version**: v0.9.0
 
 </aside>
 
 [kind] can be used for creating a local Kubernetes cluster for development environments or for
 the creation of a temporary [bootstrap cluster] used to provision a target [management cluster] on the selected infrastructure provider.
 
-The installation procedure depends on the version of kind; if you are planning to user the docker infrastructure provider,
+The installation procedure depends on the version of kind; if you are planning to use the docker infrastructure provider,
 please follow the additional instructions in the dedicated tab:
 
-{{#tabs name:"install-kind" tabs:"v0.7.x,v0.8.x,Docker"}}
-{{#tab v0.7.x}}
+{{#tabs name:"install-kind" tabs:"v0.9.x,Docker"}}
+{{#tab v0.9.x}}
 
-Create the kind cluster:
-```bash
-kind create cluster
-```
-Test to ensure the local kind cluster is ready:
-```
-kubectl cluster-info
-```
-
-{{#/tab }}
-{{#tab v0.8.x}}
-
-Export the variable **KIND_EXPERIMENTAL_DOCKER_NETWORK=bridge** to let kind run in the default **bridge** network:
-```bash
-export KIND_EXPERIMENTAL_DOCKER_NETWORK=bridge
-```
 Create the kind cluster:
 ```bash
 kind create cluster
@@ -91,7 +75,7 @@ nodes:
 EOF
 ```
 
-Then follow the instruction for your kind version using  `kind create cluster --config kind-cluster-with-extramounts.yaml` 
+Then follow the instruction for your kind version using  `kind create cluster --config kind-cluster-with-extramounts.yaml`
 to create the management cluster using the above file.
 
 {{#/tab }}
@@ -160,7 +144,7 @@ and `kubeadm` control-plane providers.
 Depending on the infrastructure provider you are planning to use, some additional prerequisites should be satisfied
 before getting started with Cluster API. See below for the expected settings for common providers.
 
-{{#tabs name:"tab-installation-infrastructure" tabs:"AWS,Azure,Docker,GCP,vSphere,OpenStack,Metal3,Packet"}}
+{{#tabs name:"tab-installation-infrastructure" tabs:"AWS,Azure,DigitalOcean,Docker,GCP,vSphere,OpenStack,Metal3,Packet"}}
 {{#tab AWS}}
 
 Download the latest binary of `clusterawsadm` from the [AWS provider releases] and make sure to place it in your path. You need at least version v0.5.5 for these instructions.
@@ -217,6 +201,18 @@ clusterctl init --infrastructure azure
 ```
 
 {{#/tab }}
+{{#tab DigitalOcean}}
+
+```bash
+export DIGITALOCEAN_ACCESS_TOKEN=<your-access-token>
+export DO_B64ENCODED_CREDENTIALS="$(echo -n "${DIGITALOCEAN_ACCESS_TOKEN}" | base64 | tr -d '\n')"
+
+# Initialize the management cluster
+clusterctl init --infrastructure digitalocean
+```
+
+
+{{#/tab }}
 {{#tab Docker}}
 
 <aside class="note warning">
@@ -228,7 +224,7 @@ The Docker provider is not designed for production use and is intended for devel
 </aside>
 
 The docker provider does not require additional prerequisites.
-You can run 
+You can run
 ```
 clusterctl init --infrastructure docker
 ```
@@ -275,7 +271,7 @@ clusterctl init --infrastructure openstack
 {{#/tab }}
 {{#tab Metal3}}
 
-Please visit the [Metal3 project][Metal3 getting started guide].
+Please visit the [Metal3 project][Metal3 provider].
 
 {{#/tab }}
 {{#tab Packet}}
@@ -362,7 +358,7 @@ before configuring a cluster with Cluster API. Instructions are provided for com
 Otherwise, you can look at the `clusterctl config cluster` [command][clusterctl config cluster] documentation for details about how to
 discover the list of variables required by a cluster templates.
 
-{{#tabs name:"tab-configuration-infrastructure" tabs:"AWS,Azure,Docker,GCP,vSphere,OpenStack,Metal3,Packet"}}
+{{#tabs name:"tab-configuration-infrastructure" tabs:"AWS,Azure,DigitalOcean,Docker,GCP,vSphere,OpenStack,Metal3,Packet"}}
 {{#tab AWS}}
 
 ```bash
@@ -385,6 +381,21 @@ export AZURE_LOCATION="centralus"
 # Select VM types.
 export AZURE_CONTROL_PLANE_MACHINE_TYPE="Standard_D2s_v3"
 export AZURE_NODE_MACHINE_TYPE="Standard_D2s_v3"
+```
+
+{{#/tab }}
+{{#tab DigitalOcean}}
+
+A ClusterAPI compatible image must be available in your DigitalOcean account. For instructions on how to build a compatible image
+see [image-builder](https://image-builder.sigs.k8s.io/capi/capi.html).
+
+```bash
+export DO_REGION=nyc1
+export DO_SSH_KEY_FINGERPRINT=<your-ssh-key-fingerprint>
+export DO_CONTROL_PLANE_MACHINE_TYPE=s-2vcpu-2gb
+export DO_CONTROL_PLANE_MACHINE_IMAGE=<your-capi-image-id>
+export DO_NODE_MACHINE_TYPE=s-2vcpu-2gb
+export DO_NODE_MACHINE_IMAGE==<your-capi-image-id>
 ```
 
 {{#/tab }}
@@ -470,10 +481,6 @@ source /tmp/env.rc <path/to/clouds.yaml> <cloud>
 
 Apart from the script, the following OpenStack environment variables are required.
 ```bash
-# The IP address on which the API server is serving.
-export OPENSTACK_CONTROLPLANE_IP=<control plane ip>
-# The ID of an external OpenStack Network. This is necessary to get public internet to the VMs.
-export OPENSTACK_EXTERNAL_NETWORK_ID=<external network id>
 # The list of nameservers for OpenStack Subnet being created.
 # Set this value when you need create a new network/subnet while the access through DNS is required.
 export OPENSTACK_DNS_NAMESERVERS=<dns nameserver>
@@ -485,8 +492,8 @@ export OPENSTACK_CONTROL_PLANE_MACHINE_FLAVOR=<flavor>
 export OPENSTACK_NODE_MACHINE_FLAVOR=<flavor>
 # The name of the image to use for your server instance. If the RootVolume is specified, this will be ignored and use rootVolume directly.
 export OPENSTACK_IMAGE_NAME=<image name>
-# SSHAuthorizedKeys specifies a list of ssh authorized keys for the user
-export OPENSTACK_SSH_AUTHORIZED_KEY=<ssh key>
+# The SSH key pair name
+export OPENSTACK_SSH_KEY_NAME=<ssh key pair name>
 ```
 
 A full configuration reference can be found in [configuration.md](https://github.com/kubernetes-sigs/cluster-api-provider-openstack/blob/master/docs/configuration.md).
@@ -494,7 +501,27 @@ A full configuration reference can be found in [configuration.md](https://github
 {{#/tab }}
 {{#tab Metal3}}
 
-Please visit the [Metal3 getting started guide].
+```bash
+# The URL of the kernel to deploy.
+export DEPLOY_KERNEL_URL="http://172.22.0.1:6180/images/ironic-python-agent.kernel"
+# The URL of the ramdisk to deploy.
+export DEPLOY_RAMDISK_URL="http://172.22.0.1:6180/images/ironic-python-agent.initramfs"
+# The URL of the Ironic endpoint.
+export IRONIC_URL="http://172.22.0.1:6385/v1/"
+# The URL of the Ironic inspector endpoint.
+export IRONIC_INSPECTOR_URL="http://172.22.0.1:5050/v1/"
+# Do not use a dedicated CA certificate for Ironic API. Any value provided in this variable disables additional CA certificate validation.
+# To provide a CA certificate, leave this variable unset. If unset, then IRONIC_CA_CERT_B64 must be set.
+export IRONIC_NO_CA_CERT=true
+# Disables basic authentication for Ironic API. Any value provided in this variable disables authentication.
+# To enable authentication, leave this variable unset. If unset, then IRONIC_USERNAME and IRONIC_PASSWORD must be set.
+export IRONIC_NO_BASIC_AUTH=true
+# Disables basic authentication for Ironic inspector API. Any value provided in this variable disables authentication.
+# To enable authentication, leave this variable unset. If unset, then IRONIC_INSPECTOR_USERNAME and IRONIC_INSPECTOR_PASSWORD must be set.
+export IRONIC_INSPECTOR_NO_BASIC_AUTH=true
+```
+
+Please visit the [Metal3 getting started guide] for more details.
 
 {{#/tab }}
 {{#tab Packet}}
@@ -504,7 +531,7 @@ order to get a well tuned and function workload, they are all listed here:
 
 ```bash
 # The project where your cluster will be placed to.
-# You have to get out from Packet Portal if you don't have one already.
+# You have to get out from Packet Portal if you do not have one already.
 export PROJECT_ID="5yd4thd-5h35-5hwk-1111-125gjej40930"
 # The facility where you want your cluster to be provisioned
 export FACILITY="ewr1"
@@ -525,12 +552,12 @@ export WORKER_NODE_TYPE="t1.small"
 
 For the purpose of this tutorial, we'll name our cluster capi-quickstart.
 
-{{#tabs name:"tab-clusterctl-config-cluster" tabs:"Azure|AWS|GCP|vSphere|OpenStack|Metal3|Packet,Docker"}}
-{{#tab Azure|AWS|GCP|vSphere|OpenStack|Metal3|Packet}}
+{{#tabs name:"tab-clusterctl-config-cluster" tabs:"Azure|AWS|DigitalOcean|GCP|vSphere|OpenStack|Metal3|Packet,Docker"}}
+{{#tab Azure|AWS|DigitalOcean|GCP|vSphere|OpenStack|Metal3|Packet}}
 
 ```bash
 clusterctl config cluster capi-quickstart \
-  --kubernetes-version v1.18.2 \
+  --kubernetes-version v1.19.1 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -549,7 +576,7 @@ The Docker provider is not designed for production use and is intended for devel
 
 ```bash
 clusterctl config cluster capi-quickstart --flavor development \
-  --kubernetes-version v1.18.2 \
+  --kubernetes-version v1.19.1 \
   --control-plane-machine-count=3 \
   --worker-machine-count=3 \
   > capi-quickstart.yaml
@@ -625,7 +652,7 @@ clusterctl get kubeconfig capi-quickstart > capi-quickstart.kubeconfig
 <h1>Warning</h1>
 
 The `clusterctl get kubeconfig` command is available on for clusterctl v0.3.9 or newer. See [clusterctl get kubeconfig] for more details. If you are running older
-version you can use the following command: 
+version you can use the following command:
 
 ```bash
 kubectl --namespace=default get secret capi-quickstart-kubeconfig \
@@ -635,7 +662,7 @@ kubectl --namespace=default get secret capi-quickstart-kubeconfig \
 
 If you are using docker on MacOS, you will need to do a couple of additional
 steps to get the correct kubeconfig for a workload cluster created with the docker provider.
-See [Additional Notes for the Docker Provider](../clusterctl/developers.md#additional-notes-for-the-docker-provider). 
+See [Additional Notes for the Docker Provider](../clusterctl/developers.md#additional-notes-for-the-docker-provider).
 
 </aside>
 
@@ -643,8 +670,8 @@ See [Additional Notes for the Docker Provider](../clusterctl/developers.md#addit
 
 Calico is used here as an example.
 
-{{#tabs name:"tab-deploy-cni" tabs:"AWS|Docker|GCP|vSphere|OpenStack|Metal3|Packet,Azure"}}
-{{#tab AWS|Docker|GCP|vSphere|OpenStack|Metal3|Packet}}
+{{#tabs name:"tab-deploy-cni" tabs:"AWS|DigitalOcean|Docker|GCP|vSphere|OpenStack|Metal3|Packet,Azure"}}
+{{#tab AWS|DigitalOcean|Docker|GCP|vSphere|OpenStack|Metal3|Packet}}
 
 ```bash
 kubectl --kubeconfig=./capi-quickstart.kubeconfig \
@@ -695,7 +722,7 @@ kind delete cluster
 See the [clusterctl] documentation for more detail about clusterctl supported actions.
 
 <!-- links -->
-[AWS provider prerequisites]: https://github.com/kubernetes-sigs/cluster-api-provider-aws/blob/master/docs/prerequisites.md
+[AWS provider prerequisites]: https://cluster-api-aws.sigs.k8s.io/topics/using-clusterawsadm-to-fulfill-prerequisites.html
 [AWS provider releases]: https://github.com/kubernetes-sigs/cluster-api-provider-aws/releases
 [Azure Provider Prerequisites]: https://github.com/kubernetes-sigs/cluster-api-provider-azure/blob/master/docs/getting-started.md#prerequisites
 [bootstrap cluster]: ../reference/glossary.md#bootstrap-cluster
@@ -711,7 +738,8 @@ See the [clusterctl] documentation for more detail about clusterctl supported ac
 [KubeadmControlPlane]: ../developer/architecture/controllers/control-plane.md
 [kubectl]: https://kubernetes.io/docs/tasks/tools/install-kubectl/
 [management cluster]: ../reference/glossary.md#management-cluster
-[Metal3 getting started guide]: https://github.com/metal3-io/cluster-api-provider-metal3/
+[Metal3 provider]: https://github.com/metal3-io/cluster-api-provider-metal3/
+[Metal3 getting started guide]: https://github.com/metal3-io/cluster-api-provider-metal3/blob/master/docs/getting-started.md
 [Packet getting started guide]: https://github.com/kubernetes-sigs/cluster-api-provider-packet#using
 [provider components]: ../reference/glossary.md#provider-components
 [vSphere getting started guide]: https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/

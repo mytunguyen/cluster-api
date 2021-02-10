@@ -18,7 +18,9 @@ package cluster
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/pkg/errors"
@@ -48,18 +50,6 @@ const (
 
 	certmanagerVersionAnnotation = "certmanager.clusterctl.cluster.x-k8s.io/version"
 	certmanagerHashAnnotation    = "certmanager.clusterctl.cluster.x-k8s.io/hash"
-
-	// NOTE: // If the cert-manager.yaml asset is modified, this line **MUST** be updated
-	// accordingly else future upgrades of the cert-manager component will not
-	// be possible, as there'll be no record of the version installed.
-	embeddedCertManagerManifestVersion = "v0.16.1"
-
-	// NOTE: The hash is used to ensure that when the cert-manager.yaml file is updated,
-	// the version number marker here is _also_ updated.
-	// You can either generate the SHA256 hash of the file, or alternatively
-	// run `go test` against this package. THe Test_VersionMarkerUpToDate will output
-	// the expected hash if it does not match the hash here.
-	embeddedCertManagerManifestHash = "af8c08a8eb65d102ba98889a89f4ad1d3db5d302edb5b8f8f3e69bb992faa211"
 )
 
 // CertManagerUpgradePlan defines the upgrade plan if cert-manager needs to be
@@ -89,21 +79,61 @@ type CertManagerClient interface {
 
 // certManagerClient implements CertManagerClient .
 type certManagerClient struct {
-	configClient        config.Client
-	proxy               Proxy
-	pollImmediateWaiter PollImmediateWaiter
+	configClient                       config.Client
+	proxy                              Proxy
+	pollImmediateWaiter                PollImmediateWaiter
+	embeddedCertManagerManifestVersion string
+	embeddedCertManagerManifestHash    string
 }
 
 // Ensure certManagerClient implements the CertManagerClient interface.
 var _ CertManagerClient = &certManagerClient{}
 
-// newCertMangerClient returns a certManagerClient.
-func newCertMangerClient(configClient config.Client, proxy Proxy, pollImmediateWaiter PollImmediateWaiter) *certManagerClient {
-	return &certManagerClient{
+func (cm *certManagerClient) setManifestHash() error {
+	yamlData, err := manifests.Asset(embeddedCertManagerManifestPath)
+	if err != nil {
+		return err
+	}
+	cm.embeddedCertManagerManifestHash = fmt.Sprintf("%x", sha256.Sum256(yamlData))
+	return nil
+}
+
+func (cm *certManagerClient) setManifestVersion() error {
+	// Gets the cert-manager version from the image version in the raw yaml
+	yaml, err := manifests.Asset(embeddedCertManagerManifestPath)
+	if err != nil {
+		return err
+	}
+
+	r, err := regexp.Compile("(?:quay.io/jetstack/cert-manager-controller:)(.*)")
+	if err != nil {
+		return err
+	}
+
+	if match := r.FindStringSubmatch(string(yaml)); len(match) > 0 {
+		cm.embeddedCertManagerManifestVersion = match[1]
+		return nil
+	}
+	return errors.New("Failed to detect cert-manager version by searching for quay.io/jetstack/cert-manager-controller image version")
+}
+
+// newCertManagerClient returns a certManagerClient.
+func newCertManagerClient(configClient config.Client, proxy Proxy, pollImmediateWaiter PollImmediateWaiter) (*certManagerClient, error) {
+	cm := &certManagerClient{
 		configClient:        configClient,
 		proxy:               proxy,
 		pollImmediateWaiter: pollImmediateWaiter,
 	}
+	err := cm.setManifestVersion()
+	if err != nil {
+		return nil, err
+	}
+
+	err = cm.setManifestHash()
+	if err != nil {
+		return nil, err
+	}
+	return cm, nil
 }
 
 // Images return the list of images required for installing the cert-manager.
@@ -134,7 +164,7 @@ func (cm *certManagerClient) EnsureInstalled() error {
 		return nil
 	}
 
-	log.Info("Installing cert-manager", "Version", embeddedCertManagerManifestVersion)
+	log.Info("Installing cert-manager", "Version", cm.embeddedCertManagerManifestVersion)
 	return cm.install()
 }
 
@@ -178,14 +208,14 @@ func (cm *certManagerClient) PlanUpgrade() (CertManagerUpgradePlan, error) {
 		return CertManagerUpgradePlan{}, errors.Wrap(err, "failed get cert manager components")
 	}
 
-	currentVersion, shouldUpgrade, err := shouldUpgrade(objs)
+	currentVersion, shouldUpgrade, err := cm.shouldUpgrade(objs)
 	if err != nil {
 		return CertManagerUpgradePlan{}, err
 	}
 
 	return CertManagerUpgradePlan{
 		From:          currentVersion,
-		To:            embeddedCertManagerManifestVersion,
+		To:            cm.embeddedCertManagerManifestVersion,
 		ShouldUpgrade: shouldUpgrade,
 	}, nil
 }
@@ -201,7 +231,7 @@ func (cm *certManagerClient) EnsureLatestVersion() error {
 		return errors.Wrap(err, "failed get cert manager components")
 	}
 
-	currentVersion, shouldUpgrade, err := shouldUpgrade(objs)
+	currentVersion, shouldUpgrade, err := cm.shouldUpgrade(objs)
 	if err != nil {
 		return err
 	}
@@ -220,7 +250,7 @@ func (cm *certManagerClient) EnsureLatestVersion() error {
 	}
 
 	// install the cert-manager version embedded in clusterctl
-	log.Info("Installing cert-manager", "Version", embeddedCertManagerManifestVersion)
+	log.Info("Installing cert-manager", "Version", cm.embeddedCertManagerManifestVersion)
 	return cm.install()
 }
 
@@ -254,7 +284,7 @@ func (cm *certManagerClient) deleteObjs(objs []unstructured.Unstructured) error 
 	return nil
 }
 
-func shouldUpgrade(objs []unstructured.Unstructured) (string, bool, error) {
+func (cm *certManagerClient) shouldUpgrade(objs []unstructured.Unstructured) (string, bool, error) {
 	needUpgrade := false
 	currentVersion := ""
 	for i := range objs {
@@ -265,10 +295,9 @@ func shouldUpgrade(objs []unstructured.Unstructured) (string, bool, error) {
 			continue
 		}
 
-		// if no version then upgrade (v0.11.0)
+		// if there is no version annotation, this means the obj is cert-manager v0.11.0 (installed with older version of clusterctl)
 		objVersion, ok := obj.GetAnnotations()[certmanagerVersionAnnotation]
 		if !ok {
-			// if there is no version annotation, this means the obj is cert-manager v0.11.0 (installed with older version of clusterctl)
 			currentVersion = "v0.11.0"
 			needUpgrade = true
 			break
@@ -279,7 +308,7 @@ func shouldUpgrade(objs []unstructured.Unstructured) (string, bool, error) {
 			return "", false, errors.Wrapf(err, "failed to parse version for cert-manager component %s/%s", obj.GetKind(), obj.GetName())
 		}
 
-		c, err := objSemVersion.Compare(embeddedCertManagerManifestVersion)
+		c, err := objSemVersion.Compare(cm.embeddedCertManagerManifestVersion)
 		if err != nil {
 			return "", false, errors.Wrapf(err, "failed to compare version for cert-manager component %s/%s", obj.GetKind(), obj.GetName())
 		}
@@ -292,7 +321,7 @@ func shouldUpgrade(objs []unstructured.Unstructured) (string, bool, error) {
 		case c == 0:
 			// if version == current, check the manifest hash; if it does not exists or if it is different, then upgrade
 			objHash, ok := obj.GetAnnotations()[certmanagerHashAnnotation]
-			if !ok || objHash != embeddedCertManagerManifestHash {
+			if !ok || objHash != cm.embeddedCertManagerManifestHash {
 				currentVersion = fmt.Sprintf("%s (%s)", objVersion, objHash)
 				needUpgrade = true
 				break
@@ -383,8 +412,8 @@ func (cm *certManagerClient) createObj(obj unstructured.Unstructured) error {
 	}
 	// persist the version number of stored resources to make a
 	// future enhancement to add upgrade support possible.
-	annotations[certmanagerVersionAnnotation] = embeddedCertManagerManifestVersion
-	annotations[certmanagerHashAnnotation] = embeddedCertManagerManifestHash
+	annotations[certmanagerVersionAnnotation] = cm.embeddedCertManagerManifestVersion
+	annotations[certmanagerHashAnnotation] = cm.embeddedCertManagerManifestHash
 	obj.SetAnnotations(annotations)
 
 	c, err := cm.proxy.NewClient()

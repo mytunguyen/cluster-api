@@ -17,7 +17,6 @@ limitations under the License.
 package controllers
 
 import (
-	"context"
 	"testing"
 
 	. "github.com/onsi/ginkgo"
@@ -26,18 +25,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/pointer"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	"sigs.k8s.io/cluster-api/util/patch"
 )
 
 var _ = Describe("Cluster Reconciler", func() {
@@ -199,7 +194,7 @@ var _ = Describe("Cluster Reconciler", func() {
 		}, timeout).Should(BeTrue())
 	})
 
-	It("Should successfully patch a cluster object if only removing finalizers", func() {
+	It("Should re-apply finalizers if removed", func() {
 		// Setup
 		cluster := &clusterv1.Cluster{
 			ObjectMeta: metav1.ObjectMeta{
@@ -222,7 +217,7 @@ var _ = Describe("Cluster Reconciler", func() {
 			return len(cluster.Finalizers) > 0
 		}, timeout).Should(BeTrue())
 
-		// Patch
+		// Remove finalizers
 		Eventually(func() bool {
 			ph, err := patch.NewHelper(cluster, testEnv)
 			Expect(err).ShouldNot(HaveOccurred())
@@ -233,14 +228,14 @@ var _ = Describe("Cluster Reconciler", func() {
 
 		Expect(cluster.Finalizers).Should(BeEmpty())
 
-		// Assertions
+		// Check finalizers are re-applied
 		Eventually(func() []string {
 			instance := &clusterv1.Cluster{}
 			if err := testEnv.Get(ctx, key, instance); err != nil {
 				return []string{"not-empty"}
 			}
 			return instance.Finalizers
-		}, timeout).Should(BeEmpty())
+		}, timeout).ShouldNot(BeEmpty())
 	})
 
 	It("Should successfully set Status.ControlPlaneInitialized on the cluster object if controlplane is ready", func() {
@@ -257,7 +252,7 @@ var _ = Describe("Cluster Reconciler", func() {
 			err := testEnv.Delete(ctx, cluster)
 			Expect(err).NotTo(HaveOccurred())
 		}()
-		Expect(testEnv.CreateKubeconfigSecret(cluster)).To(Succeed())
+		Expect(testEnv.CreateKubeconfigSecret(ctx, cluster)).To(Succeed())
 
 		// Wait for reconciliation to happen.
 		Eventually(func() bool {
@@ -292,7 +287,7 @@ var _ = Describe("Cluster Reconciler", func() {
 				ClusterName: cluster.Name,
 				ProviderID:  pointer.StringPtr("aws:///id-node-1"),
 				Bootstrap: clusterv1.Bootstrap{
-					Data: pointer.StringPtr(""),
+					DataSecretName: pointer.StringPtr(""),
 				},
 			},
 		}
@@ -420,15 +415,12 @@ func TestClusterReconciler(t *testing.T) {
 
 		tests := []struct {
 			name string
-			o    handler.MapObject
+			o    client.Object
 			want []ctrl.Request
 		}{
 			{
 				name: "controlplane machine, noderef is set, should return cluster",
-				o: handler.MapObject{
-					Meta:   controlPlaneWithNoderef.GetObjectMeta(),
-					Object: controlPlaneWithNoderef,
-				},
+				o:    controlPlaneWithNoderef,
 				want: []ctrl.Request{
 					{
 						NamespacedName: util.ObjectKey(cluster),
@@ -437,26 +429,17 @@ func TestClusterReconciler(t *testing.T) {
 			},
 			{
 				name: "controlplane machine, noderef is not set",
-				o: handler.MapObject{
-					Meta:   controlPlaneWithoutNoderef.GetObjectMeta(),
-					Object: controlPlaneWithoutNoderef,
-				},
+				o:    controlPlaneWithoutNoderef,
 				want: nil,
 			},
 			{
 				name: "not controlplane machine, noderef is set",
-				o: handler.MapObject{
-					Meta:   nonControlPlaneWithNoderef.GetObjectMeta(),
-					Object: nonControlPlaneWithNoderef,
-				},
+				o:    nonControlPlaneWithNoderef,
 				want: nil,
 			},
 			{
 				name: "not controlplane machine, noderef is not set",
-				o: handler.MapObject{
-					Meta:   nonControlPlaneWithoutNoderef.GetObjectMeta(),
-					Object: nonControlPlaneWithoutNoderef,
-				},
+				o:    nonControlPlaneWithoutNoderef,
 				want: nil,
 			},
 		}
@@ -467,8 +450,7 @@ func TestClusterReconciler(t *testing.T) {
 				g.Expect(clusterv1.AddToScheme(scheme.Scheme)).To(Succeed())
 
 				r := &ClusterReconciler{
-					Client: fake.NewFakeClientWithScheme(scheme.Scheme, cluster, controlPlaneWithNoderef, controlPlaneWithoutNoderef, nonControlPlaneWithNoderef, nonControlPlaneWithoutNoderef),
-					Log:    log.Log,
+					Client: fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(cluster, controlPlaneWithNoderef, controlPlaneWithoutNoderef, nonControlPlaneWithNoderef, nonControlPlaneWithoutNoderef).Build(),
 				}
 				requests := r.controlPlaneMachineToCluster(tt.o)
 				g.Expect(requests).To(Equal(tt.want))
@@ -626,7 +608,7 @@ func TestFilterOwnedDescendants(t *testing.T) {
 	actual, err := d.filterOwnedDescendants(&c)
 	g.Expect(err).NotTo(HaveOccurred())
 
-	expected := []runtime.Object{
+	expected := []client.Object{
 		&md2OwnedByCluster,
 		&md4OwnedByCluster,
 		&ms2OwnedByCluster,
@@ -656,10 +638,8 @@ func TestReconcileControlPlaneInitializedControlPlaneRef(t *testing.T) {
 		},
 	}
 
-	r := &ClusterReconciler{
-		Log: log.Log,
-	}
-	res, err := r.reconcileControlPlaneInitialized(context.Background(), c)
+	r := &ClusterReconciler{}
+	res, err := r.reconcileControlPlaneInitialized(ctx, c)
 	g.Expect(res.IsZero()).To(BeTrue())
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(c.Status.ControlPlaneInitialized).To(BeFalse())

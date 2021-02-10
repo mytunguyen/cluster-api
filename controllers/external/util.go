@@ -27,7 +27,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/names"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 )
 
 const (
@@ -95,7 +95,7 @@ func CloneTemplate(ctx context.Context, in *CloneTemplateInput) (*corev1.ObjectR
 	}
 
 	// Create the external clone.
-	if err := in.Client.Create(context.Background(), to); err != nil {
+	if err := in.Client.Create(ctx, to); err != nil {
 		return nil, err
 	}
 

@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:experimental
+# syntax=docker/dockerfile:1.1-experimental
 
 # Copyright 2019 The Kubernetes Authors.
 #
@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.13.15 as builder
+FROM golang:1.15.7 as builder
 
 # Run this with docker build --build_arg goproxy=$(go env GOPROXY) to override the goproxy
 ARG goproxy=https://proxy.golang.org
@@ -32,7 +32,8 @@ COPY test/infrastructure/docker/go.sum go.sum
 
 # Cache deps before building and copying source so that we don't need to re-download as much
 # and so that source changes don't invalidate our downloaded layer
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 # This needs to build with the entire Cluster API context
 WORKDIR /workspace
@@ -44,18 +45,15 @@ WORKDIR /workspace/test/infrastructure/docker
 
 # Build the CAPD manager using the compiler cache folder
 RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o /workspace/manager main.go
 
-# Use alpine:latest as minimal base image to package the manager binary and its dependencies
-FROM alpine:latest
+FROM golang:1.15.7
 
 # install a couple of dependencies
 WORKDIR /tmp
-RUN apk add --update \
-    curl \
-    && rm -rf /var/cache/apk/*
 
-RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.15.0/bin/linux/amd64/kubectl && \
+RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.19.2/bin/linux/amd64/kubectl && \
     chmod +x ./kubectl && \
     mv ./kubectl /usr/local/bin/kubectl
 

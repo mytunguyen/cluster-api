@@ -8,7 +8,7 @@ workflow that offers easy deployments and rapid iterative builds.
 ## Prerequisites
 
 1. [Docker](https://docs.docker.com/install/) v19.03 or newer
-1. [kind](https://kind.sigs.k8s.io) v0.7 or newer (other clusters can be
+1. [kind](https://kind.sigs.k8s.io) v0.9 or newer (other clusters can be
    used if `preload_images_for_kind` is set to false)
 1. [kustomize](https://github.com/kubernetes-sigs/kustomize/blob/master/docs/INSTALL.md)
    standalone (`kubectl kustomize` does not work because it is missing
@@ -73,7 +73,7 @@ for more details.
 **kustomize_substitutions** (Map{String: String}, default={}): An optional map of substitutions for `${}`-style placeholders in the
 provider's yaml.
 
-{{#tabs name:"tab-tilt-kustomize-substitution" tabs:"AWS,Azure,GCP"}}
+{{#tabs name:"tab-tilt-kustomize-substitution" tabs:"AWS,Azure,DigitalOcean,GCP"}}
 {{#tab AWS}}
 
 For example, if the yaml contains `${AWS_B64ENCODED_CREDENTIALS}`, you could do the following:
@@ -121,6 +121,15 @@ Add the output of the following as a section in your `tilt-settings.json`:
      "AZURE_CLIENT_ID_B64": "$(echo "${AZURE_CLIENT_ID}" | tr -d '\n' | base64 | tr -d '\n')"
     }
   EOF
+```
+
+{{#/tab }}
+{{#tab DigitalOcean}}
+
+```json
+"kustomize_substitutions": {
+  "DO_B64ENCODED_CREDENTIALS": "your credentials here"
+}
 ```
 
 {{#/tab }}
@@ -216,7 +225,7 @@ for the provider and performs a live update of the running container.
 docker build. e.g.
 
 ``` Dockerfile
-RUN wget -qO- https://dl.k8s.io/v1.14.4/kubernetes-client-linux-amd64.tar.gz | tar xvz
+RUN wget -qO- https://dl.k8s.io/v1.19.2/kubernetes-client-linux-amd64.tar.gz | tar xvz
 RUN wget -qO- https://get.docker.com | sh
 ```
 

@@ -23,6 +23,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -30,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -41,11 +42,10 @@ import (
 )
 
 const (
-	defaultClientTimeout = 10 * time.Second
-
 	healthCheckPollInterval       = 10 * time.Second
 	healthCheckRequestTimeout     = 5 * time.Second
 	healthCheckUnhealthyThreshold = 10
+	ClusterCacheControllerName    = "cluster-cache-tracker"
 )
 
 // ClusterCacheTracker manages client caches for workload clusters.
@@ -68,7 +68,7 @@ func NewClusterCacheTracker(log logr.Logger, manager ctrl.Manager) (*ClusterCach
 	}, nil
 }
 
-// GetClient returns a client for the given cluster.
+// GetClient returns a cached client for the given cluster.
 func (t *ClusterCacheTracker) GetClient(ctx context.Context, cluster client.ObjectKey) (client.Client, error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
@@ -81,10 +81,10 @@ func (t *ClusterCacheTracker) GetClient(ctx context.Context, cluster client.Obje
 	return accessor.client, nil
 }
 
-// clusterAccessor represents the combination of a client, cache, and watches for a remote cluster.
+// clusterAccessor represents the combination of a delegating client, cache, and watches for a remote cluster.
 type clusterAccessor struct {
 	cache   *stoppableCache
-	client  *client.DelegatingClient
+	client  client.Client
 	watches sets.String
 }
 
@@ -118,11 +118,10 @@ func (t *ClusterCacheTracker) getClusterAccessorLH(ctx context.Context, cluster 
 // newClusterAccessor creates a new clusterAccessor.
 func (t *ClusterCacheTracker) newClusterAccessor(ctx context.Context, cluster client.ObjectKey) (*clusterAccessor, error) {
 	// Get a rest config for the remote cluster
-	config, err := RESTConfig(ctx, t.client, cluster)
+	config, err := RESTConfig(ctx, ClusterCacheControllerName, t.client, cluster)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error fetching REST client config for remote cluster %q", cluster.String())
 	}
-	config.Timeout = defaultClientTimeout
 
 	// Create a mapper for it
 	mapper, err := apiutil.NewDynamicRESTMapper(config)
@@ -146,26 +145,33 @@ func (t *ClusterCacheTracker) newClusterAccessor(ctx context.Context, cluster cl
 		return nil, errors.Wrapf(err, "error creating cache for remote cluster %q", cluster.String())
 	}
 
+	cacheCtx, cacheCtxCancel := context.WithCancel(ctx)
+
 	// We need to be able to stop the cache's shared informers, so wrap this in a stoppableCache.
 	cache := &stoppableCache{
-		Cache: remoteCache,
-		stop:  make(chan struct{}),
+		Cache:      remoteCache,
+		cancelFunc: cacheCtxCancel,
 	}
 
 	// Start the cache!!!
-	go cache.Start(cache.stop)
+	go cache.Start(cacheCtx)
 
 	// Start cluster healthcheck!!!
-	go t.healthCheckCluster(&healthCheckInput{
-		stop:    cache.stop,
+	go t.healthCheckCluster(cacheCtx, &healthCheckInput{
 		cluster: cluster,
 		cfg:     config,
 	})
 
-	delegatingClient := &client.DelegatingClient{
-		Reader:       cache,
-		Writer:       c,
-		StatusClient: c,
+	delegatingClient, err := client.NewDelegatingClient(client.NewDelegatingClientInput{
+		CacheReader: cache,
+		Client:      c,
+		UncachedObjects: []client.Object{
+			&corev1.ConfigMap{},
+			&corev1.Secret{},
+		},
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &clusterAccessor{
@@ -212,7 +218,7 @@ type WatchInput struct {
 	Watcher Watcher
 
 	// Kind is the type of resource to watch.
-	Kind runtime.Object
+	Kind client.Object
 
 	// EventHandler contains the event handlers to invoke for resource events.
 	EventHandler handler.EventHandler
@@ -252,7 +258,6 @@ func (t *ClusterCacheTracker) Watch(ctx context.Context, input WatchInput) error
 
 // healthCheckInput provides the input for the healthCheckCluster method
 type healthCheckInput struct {
-	stop               <-chan struct{}
 	cluster            client.ObjectKey
 	cfg                *rest.Config
 	interval           time.Duration
@@ -280,7 +285,7 @@ func (h *healthCheckInput) setDefaults() {
 // healthCheckCluster will poll the cluster's API at the path given and, if there are
 // `unhealthyThreshold` consecutive failures, will deem the cluster unhealthy.
 // Once the cluster is deemed unhealthy, the cluster's cache is stopped and removed.
-func (t *ClusterCacheTracker) healthCheckCluster(in *healthCheckInput) {
+func (t *ClusterCacheTracker) healthCheckCluster(ctx context.Context, in *healthCheckInput) {
 	// populate optional params for healthCheckInput
 	in.setDefaults()
 
@@ -299,7 +304,7 @@ func (t *ClusterCacheTracker) healthCheckCluster(in *healthCheckInput) {
 		}
 
 		cluster := &clusterv1.Cluster{}
-		if err := t.client.Get(context.TODO(), in.cluster, cluster); err != nil {
+		if err := t.client.Get(ctx, in.cluster, cluster); err != nil {
 			if apierrors.IsNotFound(err) {
 				// If the cluster can't be found, we should delete the cache.
 				return false, err
@@ -321,7 +326,7 @@ func (t *ClusterCacheTracker) healthCheckCluster(in *healthCheckInput) {
 
 		// An error here means there was either an issue connecting or the API returned an error.
 		// If no error occurs, reset the unhealthy counter.
-		_, err := restClient.Get().AbsPath(in.path).Timeout(in.requestTimeout).DoRaw()
+		_, err := restClient.Get().AbsPath(in.path).Timeout(in.requestTimeout).DoRaw(ctx)
 		if err != nil {
 			unhealthyCount++
 		} else {
@@ -336,10 +341,12 @@ func (t *ClusterCacheTracker) healthCheckCluster(in *healthCheckInput) {
 		return false, nil
 	}
 
-	err := wait.PollImmediateUntil(in.interval, runHealthCheckWithThreshold, in.stop)
+	err := wait.PollImmediateUntil(in.interval, runHealthCheckWithThreshold, ctx.Done())
 	// An error returned implies the health check has failed a sufficient number of
 	// times for the cluster to be considered unhealthy
-	if err != nil {
+	// NB. we are ignoring ErrWaitTimeout because this error happens when the channel is close, that in this case
+	// happens when the cache is explicitly stopped.
+	if err != nil && err != wait.ErrWaitTimeout {
 		t.log.Error(err, "Error health checking cluster", "cluster", in.cluster.String())
 		t.deleteAccessor(in.cluster)
 	}

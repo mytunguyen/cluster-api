@@ -22,8 +22,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -38,20 +36,19 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/version"
+	k8sversion "k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/klogr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/util/annotations"
 	"sigs.k8s.io/cluster-api/util/container"
 	"sigs.k8s.io/cluster-api/util/predicates"
+	"sigs.k8s.io/cluster-api/util/version"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -69,34 +66,7 @@ var (
 	rnd                          = rand.New(rand.NewSource(time.Now().UnixNano()))
 	ErrNoCluster                 = fmt.Errorf("no %q label present", clusterv1.ClusterLabelName)
 	ErrUnstructuredFieldNotFound = fmt.Errorf("field not found")
-	kubeSemver                   = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([-0-9a-zA-Z_\.+]*)?$`)
 )
-
-// ParseMajorMinorPatch returns a semver.Version from the string provided
-// by looking only at major.minor.patch and stripping everything else out.
-func ParseMajorMinorPatch(version string) (semver.Version, error) {
-	groups := kubeSemver.FindStringSubmatch(version)
-	if len(groups) < 4 {
-		return semver.Version{}, errors.Errorf("failed to parse major.minor.patch from %q", version)
-	}
-	major, err := strconv.ParseUint(groups[1], 10, 64)
-	if err != nil {
-		return semver.Version{}, errors.Wrapf(err, "failed to parse major version from %q", version)
-	}
-	minor, err := strconv.ParseUint(groups[2], 10, 64)
-	if err != nil {
-		return semver.Version{}, errors.Wrapf(err, "failed to parse minor version from %q", version)
-	}
-	patch, err := strconv.ParseUint(groups[3], 10, 64)
-	if err != nil {
-		return semver.Version{}, errors.Wrapf(err, "failed to parse patch version from %q", version)
-	}
-	return semver.Version{
-		Major: major,
-		Minor: minor,
-		Patch: patch,
-	}, nil
-}
 
 // RandomString returns a random alphanumeric string.
 func RandomString(n int) string {
@@ -128,6 +98,13 @@ func Ordinalize(n int) string {
 		return fmt.Sprintf("%d%s", n, m[an])
 	}
 	return fmt.Sprintf("%d%s", n, m[an%10])
+}
+
+// ParseMajorMinorPatch returns a semver.Version from the string provided
+// by looking only at major.minor.patch and stripping everything else out.
+// Deprecated: Please use the function in util/version
+func ParseMajorMinorPatch(v string) (semver.Version, error) {
+	return version.ParseMajorMinorPatchTolerant(v)
 }
 
 // ModifyImageRepository takes an imageName (e.g., repository/image:tag), and returns an image name with updated repository
@@ -197,8 +174,18 @@ func GetControlPlaneMachinesFromList(machineList *clusterv1.MachineList) (res []
 	return
 }
 
+// IsExternalManagedControlPlane returns a bool indicating whether the control plane referenced
+// in the passed Unstructured resource is an externally managed control plane such as AKS, EKS, GKE, etc.
+func IsExternalManagedControlPlane(controlPlane *unstructured.Unstructured) bool {
+	managed, found, err := unstructured.NestedBool(controlPlane.Object, "status", "externalManagedControlPlane")
+	if err != nil || !found {
+		return false
+	}
+	return managed
+}
+
 // GetMachineIfExists gets a machine from the API server if it exists.
-func GetMachineIfExists(c client.Client, namespace, name string) (*clusterv1.Machine, error) {
+func GetMachineIfExists(ctx context.Context, c client.Client, namespace, name string) (*clusterv1.Machine, error) {
 	if c == nil {
 		// Being called before k8s is setup as part of control plane VM creation
 		return nil, nil
@@ -206,7 +193,7 @@ func GetMachineIfExists(c client.Client, namespace, name string) (*clusterv1.Mac
 
 	// Machines are identified by name
 	machine := &clusterv1.Machine{}
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: namespace, Name: name}, machine)
+	err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, machine)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, nil
@@ -284,9 +271,9 @@ func ObjectKey(object metav1.Object) client.ObjectKey {
 
 // ClusterToInfrastructureMapFunc returns a handler.ToRequestsFunc that watches for
 // Cluster events and returns reconciliation requests for an infrastructure provider object.
-func ClusterToInfrastructureMapFunc(gvk schema.GroupVersionKind) handler.ToRequestsFunc {
-	return func(o handler.MapObject) []reconcile.Request {
-		c, ok := o.Object.(*clusterv1.Cluster)
+func ClusterToInfrastructureMapFunc(gvk schema.GroupVersionKind) handler.MapFunc {
+	return func(o client.Object) []reconcile.Request {
+		c, ok := o.(*clusterv1.Cluster)
 		if !ok {
 			return nil
 		}
@@ -339,9 +326,9 @@ func GetMachineByName(ctx context.Context, c client.Client, namespace, name stri
 
 // MachineToInfrastructureMapFunc returns a handler.ToRequestsFunc that watches for
 // Machine events and returns reconciliation requests for an infrastructure provider object.
-func MachineToInfrastructureMapFunc(gvk schema.GroupVersionKind) handler.ToRequestsFunc {
-	return func(o handler.MapObject) []reconcile.Request {
-		m, ok := o.Object.(*clusterv1.Machine)
+func MachineToInfrastructureMapFunc(gvk schema.GroupVersionKind) handler.MapFunc {
+	return func(o client.Object) []reconcile.Request {
+		m, ok := o.(*clusterv1.Machine)
 		if !ok {
 			return nil
 		}
@@ -428,7 +415,7 @@ func PointsTo(refs []metav1.OwnerReference, target *metav1.ObjectMeta) bool {
 }
 
 // IsOwnedByObject returns true if any of the owner references point to the given target.
-func IsOwnedByObject(obj metav1.Object, target controllerutil.Object) bool {
+func IsOwnedByObject(obj metav1.Object, target client.Object) bool {
 	for _, ref := range obj.GetOwnerReferences() {
 		ref := ref
 		if refersTo(&ref, target) {
@@ -439,7 +426,7 @@ func IsOwnedByObject(obj metav1.Object, target controllerutil.Object) bool {
 }
 
 // IsControlledBy differs from metav1.IsControlledBy in that it checks the group (but not version), kind, and name vs uid.
-func IsControlledBy(obj metav1.Object, owner controllerutil.Object) bool {
+func IsControlledBy(obj metav1.Object, owner client.Object) bool {
 	controllerRef := metav1.GetControllerOfNoCopy(obj)
 	if controllerRef == nil {
 		return false
@@ -463,7 +450,7 @@ func referSameObject(a, b metav1.OwnerReference) bool {
 }
 
 // Returns true if ref refers to obj.
-func refersTo(ref *metav1.OwnerReference, obj controllerutil.Object) bool {
+func refersTo(ref *metav1.OwnerReference, obj client.Object) bool {
 	refGv, err := schema.ParseGroupVersion(ref.APIVersion)
 	if err != nil {
 		return false
@@ -572,7 +559,10 @@ func GetCRDMetadataFromGVK(ctx context.Context, restConfig *rest.Config, gvk sch
 
 	// Get the partial metadata CRD.
 	generatedName := fmt.Sprintf("%s.%s", flect.Pluralize(strings.ToLower(gvk.Kind)), gvk.Group)
-	return metadataClient.Resource(apiextensionsv1.SchemeGroupVersion.WithResource("customresourcedefinitions")).Get(generatedName, metav1.GetOptions{})
+
+	return metadataClient.Resource(
+		apiextensionsv1.SchemeGroupVersion.WithResource("customresourcedefinitions"),
+	).Get(ctx, generatedName, metav1.GetOptions{})
 }
 
 // KubeAwareAPIVersions is a sortable slice of kube-like version strings.
@@ -586,7 +576,7 @@ type KubeAwareAPIVersions []string
 func (k KubeAwareAPIVersions) Len() int      { return len(k) }
 func (k KubeAwareAPIVersions) Swap(i, j int) { k[i], k[j] = k[j], k[i] }
 func (k KubeAwareAPIVersions) Less(i, j int) bool {
-	return version.CompareKubeAwareVersionStrings(k[i], k[j]) < 0
+	return k8sversion.CompareKubeAwareVersionStrings(k[i], k[j]) < 0
 }
 
 // MachinesByCreationTimestamp sorts a list of Machine by creation timestamp, using their names as a tie breaker.
@@ -606,13 +596,11 @@ func (o MachinesByCreationTimestamp) Less(i, j int) bool {
 // that toggle Cluster.Spec.Cluster.
 // Deprecated: Instead add the Watch directly and use predicates.ClusterUnpaused or
 // predicates.ClusterUnpausedAndInfrastructureReady depending on your use case.
-func WatchOnClusterPaused(c controller.Controller, mapFunc handler.Mapper) error {
+func WatchOnClusterPaused(c controller.Controller, fn handler.MapFunc) error {
 	log := klogr.New().WithName("WatchOnClusterPaused")
 	return c.Watch(
 		&source.Kind{Type: &clusterv1.Cluster{}},
-		&handler.EnqueueRequestsFromMapFunc{
-			ToRequests: mapFunc,
-		},
+		handler.EnqueueRequestsFromMapFunc(fn),
 		predicates.ClusterUnpaused(log),
 	)
 }
@@ -620,7 +608,7 @@ func WatchOnClusterPaused(c controller.Controller, mapFunc handler.Mapper) error
 // ClusterToObjectsMapper returns a mapper function that gets a cluster and lists all objects for the object passed in
 // and returns a list of requests.
 // NB: The objects are required to have `clusterv1.ClusterLabelName` applied.
-func ClusterToObjectsMapper(c client.Client, ro runtime.Object, scheme *runtime.Scheme) (handler.Mapper, error) {
+func ClusterToObjectsMapper(c client.Client, ro runtime.Object, scheme *runtime.Scheme) (handler.MapFunc, error) {
 	if _, ok := ro.(metav1.ListInterface); !ok {
 		return nil, errors.Errorf("expected a metav1.ListInterface, got %T instead", ro)
 	}
@@ -630,15 +618,15 @@ func ClusterToObjectsMapper(c client.Client, ro runtime.Object, scheme *runtime.
 		return nil, err
 	}
 
-	return handler.ToRequestsFunc(func(o handler.MapObject) []ctrl.Request {
-		cluster, ok := o.Object.(*clusterv1.Cluster)
+	return func(o client.Object) []ctrl.Request {
+		cluster, ok := o.(*clusterv1.Cluster)
 		if !ok {
 			return nil
 		}
 
 		list := &unstructured.UnstructuredList{}
 		list.SetGroupVersionKind(gvk)
-		if err := c.List(context.Background(), list, client.MatchingLabels{clusterv1.ClusterLabelName: cluster.Name}); err != nil {
+		if err := c.List(context.TODO(), list, client.MatchingLabels{clusterv1.ClusterLabelName: cluster.Name}); err != nil {
 			return nil
 		}
 
@@ -650,7 +638,7 @@ func ClusterToObjectsMapper(c client.Client, ro runtime.Object, scheme *runtime.
 		}
 		return results
 
-	}), nil
+	}, nil
 }
 
 // ObjectReferenceToUnstructured converts an object reference to an unstructured object.
@@ -672,25 +660,6 @@ func IsSupportedVersionSkew(a, b semver.Version) bool {
 		return a.Minor-b.Minor == 1
 	}
 	return b.Minor-a.Minor <= 1
-}
-
-// NewDelegatingClientFunc returns a manager.NewClientFunc to be used when creating
-// a new controller runtime manager.
-//
-// A delegating client reads from the cache and writes directly to the server.
-// This avoids getting unstructured objects directly from the server
-//
-// See issue: https://github.com/kubernetes-sigs/cluster-api/issues/1663
-func ManagerDelegatingClientFunc(cache cache.Cache, config *rest.Config, options client.Options) (client.Client, error) {
-	c, err := client.New(config, options)
-	if err != nil {
-		return nil, err
-	}
-	return &client.DelegatingClient{
-		Reader:       cache,
-		Writer:       c,
-		StatusClient: c,
-	}, nil
 }
 
 // LowestNonZeroResult compares two reconciliation results

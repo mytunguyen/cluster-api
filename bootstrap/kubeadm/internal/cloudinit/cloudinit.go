@@ -22,11 +22,14 @@ import (
 	"text/template"
 
 	"github.com/pkg/errors"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
+	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha4"
 )
 
 const (
-	standardJoinCommand            = "kubeadm join --config /tmp/kubeadm-join-config.yaml %s"
+	standardJoinCommand = "kubeadm join --config /run/kubeadm/kubeadm-join-config.yaml %s"
+	// sentinelFileCommand writes a file to /run/cluster-api to signal successful Kubernetes bootstrapping in a way that
+	// works both for Linux and Windows OS.
+	sentinelFileCommand            = "echo success > /run/cluster-api/bootstrap-success.complete"
 	retriableJoinScriptName        = "/usr/local/bin/kubeadm-bootstrap-script"
 	retriableJoinScriptOwner       = "root"
 	retriableJoinScriptPermissions = "0755"
@@ -50,6 +53,7 @@ type BaseUserData struct {
 	UseExperimentalRetry bool
 	KubeadmCommand       string
 	KubeadmVerbosity     string
+	SentinelFileCommand  string
 }
 
 func (input *BaseUserData) prepare() error {
@@ -64,6 +68,7 @@ func (input *BaseUserData) prepare() error {
 		}
 		input.WriteFiles = append(input.WriteFiles, *joinScriptFile)
 	}
+	input.SentinelFileCommand = sentinelFileCommand
 	return nil
 }
 

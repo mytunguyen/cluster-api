@@ -25,7 +25,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/pkg/errors"
 
-	"sigs.k8s.io/cluster-api/test/framework"
+	"sigs.k8s.io/cluster-api/test/framework/clusterctl"
 	"sigs.k8s.io/cluster-api/test/framework/exec"
 	"sigs.k8s.io/cluster-api/test/framework/internal/log"
 	kind "sigs.k8s.io/kind/pkg/cluster"
@@ -42,7 +42,7 @@ type CreateKindBootstrapClusterAndLoadImagesInput struct {
 	RequiresDockerSock bool
 
 	// Images to be loaded in the cluster (this is kind specific)
-	Images []framework.ContainerImage
+	Images []clusterctl.ContainerImage
 }
 
 // CreateKindBootstrapClusterAndLoadImages returns a new Kubernetes cluster with pre-loaded images.
@@ -64,10 +64,14 @@ func CreateKindBootstrapClusterAndLoadImages(ctx context.Context, input CreateKi
 
 	log.Logf("The kubeconfig file for the kind cluster is %s", clusterProvider.kubeconfigPath)
 
-	LoadImagesToKindCluster(ctx, LoadImagesToKindClusterInput{
+	err := LoadImagesToKindCluster(ctx, LoadImagesToKindClusterInput{
 		Name:   input.Name,
 		Images: input.Images,
 	})
+	if err != nil {
+		clusterProvider.Dispose(ctx)
+		Expect(err).NotTo(HaveOccurred()) // re-surface the error to fail the test
+	}
 
 	return clusterProvider
 }
@@ -78,26 +82,30 @@ type LoadImagesToKindClusterInput struct {
 	Name string
 
 	// Images to be loaded in the cluster (this is kind specific)
-	Images []framework.ContainerImage
+	Images []clusterctl.ContainerImage
 }
 
 // LoadImagesToKindCluster provides a utility for loading images into a kind cluster.
-func LoadImagesToKindCluster(ctx context.Context, input LoadImagesToKindClusterInput) {
-	Expect(ctx).NotTo(BeNil(), "ctx is required for LoadImagesToKindCluster")
-	Expect(input.Name).ToNot(BeEmpty(), "Invalid argument. Name can't be empty when calling LoadImagesToKindCluster")
+func LoadImagesToKindCluster(ctx context.Context, input LoadImagesToKindClusterInput) error {
+	if ctx == nil {
+		return errors.New("ctx is required for LoadImagesToKindCluster")
+	}
+	if input.Name == "" {
+		return errors.New("Invalid argument. Name can't be empty when calling LoadImagesToKindCluster")
+	}
 
 	for _, image := range input.Images {
 		log.Logf("Loading image: %q", image.Name)
-		err := loadImage(ctx, input.Name, image.Name)
-		switch image.LoadBehavior {
-		case framework.MustLoadImage:
-			Expect(err).ToNot(HaveOccurred(), "Failed to load image %q into the kind cluster %q", image.Name, input.Name)
-		case framework.TryLoadImage:
-			if err != nil {
+		if err := loadImage(ctx, input.Name, image.Name); err != nil {
+			switch image.LoadBehavior {
+			case clusterctl.MustLoadImage:
+				return errors.Wrapf(err, "Failed to load image %q into the kind cluster %q", image.Name, input.Name)
+			case clusterctl.TryLoadImage:
 				log.Logf("[WARNING] Unable to load image %q into the kind cluster %q: %v", image.Name, input.Name, err)
 			}
 		}
 	}
+	return nil
 }
 
 // LoadImage will put a local image onto the kind node
@@ -135,10 +143,11 @@ func loadImage(ctx context.Context, cluster, image string) error {
 // copied from kind https://github.com/kubernetes-sigs/kind/blob/v0.7.0/pkg/cmd/kind/load/docker-image/docker-image.go#L168
 // save saves image to dest, as in `docker save`
 func save(ctx context.Context, image, dest string) error {
-	_, _, err := exec.NewCommand(
+	sout, serr, err := exec.NewCommand(
 		exec.WithCommand("docker"),
-		exec.WithArgs("save", "-o", dest, image)).Run(ctx)
-	return err
+		exec.WithArgs("save", "-o", dest, image),
+	).Run(ctx)
+	return errors.Wrapf(err, "stdout: %q, stderr: %q", string(sout), string(serr))
 }
 
 // copied from kind https://github.com/kubernetes-sigs/kind/blob/v0.7.0/pkg/cmd/kind/load/docker-image/docker-image.go#L158

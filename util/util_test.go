@@ -17,7 +17,6 @@ limitations under the License.
 package util
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -25,64 +24,20 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-func TestParseMajorMinorPatch(t *testing.T) {
-	g := NewWithT(t)
-
-	var testcases = []struct {
-		name        string
-		input       string
-		output      semver.Version
-		expectError bool
-	}{
-		{
-			name:  "should parse an OCI compliant string",
-			input: "v1.2.16_foo-1",
-			output: semver.Version{
-				Major: 1,
-				Minor: 2,
-				Patch: 16,
-			},
-		},
-		{
-			name:  "should parse a valid semver",
-			input: "v1.16.6+foobar-0",
-			output: semver.Version{
-				Major: 1,
-				Minor: 16,
-				Patch: 6,
-			},
-		},
-		{
-			name:        "should error if there is no patch version",
-			input:       "v1.16+foobar-0",
-			expectError: true,
-		},
-		{
-			name:        "should error if there is no minor and patch",
-			input:       "v1+foobar-0",
-			expectError: true,
-		},
-	}
-
-	for _, tc := range testcases {
-		t.Run(tc.name, func(t *testing.T) {
-			out, err := ParseMajorMinorPatch(tc.input)
-			g.Expect(err != nil).To(Equal(tc.expectError))
-			g.Expect(out).To(Equal(tc.output))
-		})
-	}
-}
+var (
+	ctx = ctrl.SetupSignalHandler()
+)
 
 func TestMachineToInfrastructureMapFunc(t *testing.T) {
 	g := NewWithT(t)
@@ -90,28 +45,26 @@ func TestMachineToInfrastructureMapFunc(t *testing.T) {
 	var testcases = []struct {
 		name    string
 		input   schema.GroupVersionKind
-		request handler.MapObject
+		request client.Object
 		output  []reconcile.Request
 	}{
 		{
 			name: "should reconcile infra-1",
 			input: schema.GroupVersionKind{
 				Group:   "foo.cluster.x-k8s.io",
-				Version: "v1alpha3",
+				Version: "v1alpha4",
 				Kind:    "TestMachine",
 			},
-			request: handler.MapObject{
-				Object: &clusterv1.Machine{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "default",
-						Name:      "test-1",
-					},
-					Spec: clusterv1.MachineSpec{
-						InfrastructureRef: corev1.ObjectReference{
-							APIVersion: "foo.cluster.x-k8s.io/v1alpha3",
-							Kind:       "TestMachine",
-							Name:       "infra-1",
-						},
+			request: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test-1",
+				},
+				Spec: clusterv1.MachineSpec{
+					InfrastructureRef: corev1.ObjectReference{
+						APIVersion: "foo.cluster.x-k8s.io/v1alpha4",
+						Kind:       "TestMachine",
+						Name:       "infra-1",
 					},
 				},
 			},
@@ -128,21 +81,19 @@ func TestMachineToInfrastructureMapFunc(t *testing.T) {
 			name: "should return no matching reconcile requests",
 			input: schema.GroupVersionKind{
 				Group:   "foo.cluster.x-k8s.io",
-				Version: "v1alpha3",
+				Version: "v1alpha4",
 				Kind:    "TestMachine",
 			},
-			request: handler.MapObject{
-				Object: &clusterv1.Machine{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "default",
-						Name:      "test-1",
-					},
-					Spec: clusterv1.MachineSpec{
-						InfrastructureRef: corev1.ObjectReference{
-							APIVersion: "bar.cluster.x-k8s.io/v1alpha3",
-							Kind:       "TestMachine",
-							Name:       "bar-1",
-						},
+			request: &clusterv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test-1",
+				},
+				Spec: clusterv1.MachineSpec{
+					InfrastructureRef: corev1.ObjectReference{
+						APIVersion: "bar.cluster.x-k8s.io/v1alpha4",
+						Kind:       "TestMachine",
+						Name:       "bar-1",
 					},
 				},
 			},
@@ -165,28 +116,26 @@ func TestClusterToInfrastructureMapFunc(t *testing.T) {
 	var testcases = []struct {
 		name    string
 		input   schema.GroupVersionKind
-		request handler.MapObject
+		request client.Object
 		output  []reconcile.Request
 	}{
 		{
 			name: "should reconcile infra-1",
 			input: schema.GroupVersionKind{
 				Group:   "foo.cluster.x-k8s.io",
-				Version: "v1alpha3",
+				Version: "v1alpha4",
 				Kind:    "TestCluster",
 			},
-			request: handler.MapObject{
-				Object: &clusterv1.Cluster{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "default",
-						Name:      "test-1",
-					},
-					Spec: clusterv1.ClusterSpec{
-						InfrastructureRef: &corev1.ObjectReference{
-							APIVersion: "foo.cluster.x-k8s.io/v1alpha3",
-							Kind:       "TestCluster",
-							Name:       "infra-1",
-						},
+			request: &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test-1",
+				},
+				Spec: clusterv1.ClusterSpec{
+					InfrastructureRef: &corev1.ObjectReference{
+						APIVersion: "foo.cluster.x-k8s.io/v1alpha4",
+						Kind:       "TestCluster",
+						Name:       "infra-1",
 					},
 				},
 			},
@@ -203,21 +152,19 @@ func TestClusterToInfrastructureMapFunc(t *testing.T) {
 			name: "should return no matching reconcile requests",
 			input: schema.GroupVersionKind{
 				Group:   "foo.cluster.x-k8s.io",
-				Version: "v1alpha3",
+				Version: "v1alpha4",
 				Kind:    "TestCluster",
 			},
-			request: handler.MapObject{
-				Object: &clusterv1.Cluster{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "default",
-						Name:      "test-1",
-					},
-					Spec: clusterv1.ClusterSpec{
-						InfrastructureRef: &corev1.ObjectReference{
-							APIVersion: "bar.cluster.x-k8s.io/v1alpha3",
-							Kind:       "TestCluster",
-							Name:       "bar-1",
-						},
+			request: &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test-1",
+				},
+				Spec: clusterv1.ClusterSpec{
+					InfrastructureRef: &corev1.ObjectReference{
+						APIVersion: "bar.cluster.x-k8s.io/v1alpha4",
+						Kind:       "TestCluster",
+						Name:       "bar-1",
 					},
 				},
 			},
@@ -459,7 +406,11 @@ func TestGetOwnerClusterSuccessByName(t *testing.T) {
 		},
 	}
 
-	c := fake.NewFakeClientWithScheme(scheme, myCluster)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(myCluster).
+		Build()
+
 	objm := metav1.ObjectMeta{
 		OwnerReferences: []metav1.OwnerReference{
 			{
@@ -471,13 +422,13 @@ func TestGetOwnerClusterSuccessByName(t *testing.T) {
 		Namespace: "my-ns",
 		Name:      "my-resource-owned-by-cluster",
 	}
-	cluster, err := GetOwnerCluster(context.TODO(), c, objm)
+	cluster, err := GetOwnerCluster(ctx, c, objm)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(cluster).NotTo(BeNil())
 
 	// Make sure API version does not matter
 	objm.OwnerReferences[0].APIVersion = "cluster.x-k8s.io/v1alpha1234"
-	cluster, err = GetOwnerCluster(context.TODO(), c, objm)
+	cluster, err = GetOwnerCluster(ctx, c, objm)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(cluster).NotTo(BeNil())
 }
@@ -495,7 +446,11 @@ func TestGetOwnerMachineSuccessByName(t *testing.T) {
 		},
 	}
 
-	c := fake.NewFakeClientWithScheme(scheme, myMachine)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(myMachine).
+		Build()
+
 	objm := metav1.ObjectMeta{
 		OwnerReferences: []metav1.OwnerReference{
 			{
@@ -507,7 +462,7 @@ func TestGetOwnerMachineSuccessByName(t *testing.T) {
 		Namespace: "my-ns",
 		Name:      "my-resource-owned-by-machine",
 	}
-	machine, err := GetOwnerMachine(context.TODO(), c, objm)
+	machine, err := GetOwnerMachine(ctx, c, objm)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(machine).NotTo(BeNil())
 }
@@ -525,7 +480,11 @@ func TestGetOwnerMachineSuccessByNameFromDifferentVersion(t *testing.T) {
 		},
 	}
 
-	c := fake.NewFakeClientWithScheme(scheme, myMachine)
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(myMachine).
+		Build()
+
 	objm := metav1.ObjectMeta{
 		OwnerReferences: []metav1.OwnerReference{
 			{
@@ -537,7 +496,7 @@ func TestGetOwnerMachineSuccessByNameFromDifferentVersion(t *testing.T) {
 		Namespace: "my-ns",
 		Name:      "my-resource-owned-by-machine",
 	}
-	machine, err := GetOwnerMachine(context.TODO(), c, objm)
+	machine, err := GetOwnerMachine(ctx, c, objm)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(machine).NotTo(BeNil())
 }
@@ -585,17 +544,56 @@ func TestGetMachinesForCluster(t *testing.T) {
 		},
 	}
 
-	c := fake.NewFakeClientWithScheme(
-		scheme,
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		machine,
 		machineDifferentClusterNameSameNamespace,
 		machineSameClusterNameDifferentNamespace,
-	)
+	).Build()
 
-	machines, err := GetMachinesForCluster(context.Background(), c, cluster)
+	machines, err := GetMachinesForCluster(ctx, c, cluster)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(machines.Items).To(HaveLen(1))
 	g.Expect(machines.Items[0].Labels[clusterv1.ClusterLabelName]).To(Equal(cluster.Name))
+}
+
+func TestIsExternalManagedControlPlane(t *testing.T) {
+	g := NewWithT(t)
+
+	t.Run("should return true if control plane status externalManagedControlPlane is true", func(t *testing.T) {
+		controlPlane := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"status": map[string]interface{}{
+					"externalManagedControlPlane": true,
+				},
+			},
+		}
+		result := IsExternalManagedControlPlane(controlPlane)
+		g.Expect(result).Should(Equal(true))
+	})
+
+	t.Run("should return false if control plane status externalManagedControlPlane is false", func(t *testing.T) {
+		controlPlane := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"status": map[string]interface{}{
+					"externalManagedControlPlane": false,
+				},
+			},
+		}
+		result := IsExternalManagedControlPlane(controlPlane)
+		g.Expect(result).Should(Equal(false))
+	})
+
+	t.Run("should return false if control plane status externalManagedControlPlane is not set", func(t *testing.T) {
+		controlPlane := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"status": map[string]interface{}{
+					"someOtherStatusField": "someValue",
+				},
+			},
+		}
+		result := IsExternalManagedControlPlane(controlPlane)
+		g.Expect(result).Should(Equal(false))
+	})
 }
 
 func TestEnsureOwnerRef(t *testing.T) {
@@ -675,7 +673,7 @@ func TestClusterToObjectsMapper(t *testing.T) {
 
 	table := []struct {
 		name        string
-		objects     []runtime.Object
+		objects     []client.Object
 		input       runtime.Object
 		output      []ctrl.Request
 		expectError bool
@@ -683,7 +681,7 @@ func TestClusterToObjectsMapper(t *testing.T) {
 		{
 			name:  "should return a list of requests with labelled machines",
 			input: &clusterv1.MachineList{},
-			objects: []runtime.Object{
+			objects: []client.Object{
 				&clusterv1.Machine{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "machine1",
@@ -709,7 +707,7 @@ func TestClusterToObjectsMapper(t *testing.T) {
 		{
 			name:  "should return a list of requests with labelled MachineDeployments",
 			input: &clusterv1.MachineDeploymentList{},
-			objects: []runtime.Object{
+			objects: []client.Object{
 				&clusterv1.MachineDeployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "md1",
@@ -749,11 +747,10 @@ func TestClusterToObjectsMapper(t *testing.T) {
 
 	for _, tc := range table {
 		tc.objects = append(tc.objects, cluster)
-		client := fake.NewFakeClientWithScheme(scheme, tc.objects...)
-
+		client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tc.objects...).Build()
 		f, err := ClusterToObjectsMapper(client, tc.input, scheme)
 		g.Expect(err != nil, err).To(Equal(tc.expectError))
-		g.Expect(f.Map(handler.MapObject{Object: cluster})).To(ConsistOf(tc.output))
+		g.Expect(f(cluster)).To(ConsistOf(tc.output))
 	}
 }
 
@@ -859,7 +856,7 @@ func TestRemoveOwnerRef(t *testing.T) {
 			Name:       "m4g1c",
 		},
 		{
-			APIVersion: "bar.cluster.x-k8s.io/v1alpha3",
+			APIVersion: "bar.cluster.x-k8s.io/v1alpha4",
 			Kind:       "TestCluster",
 			Name:       "bar-1",
 		},

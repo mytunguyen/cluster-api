@@ -21,14 +21,15 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
+	"sigs.k8s.io/cluster-api/util/conditions"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/utils/pointer"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
-	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha4"
+	controlplanev1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/internal/machinefilters"
 )
 
@@ -76,6 +77,33 @@ func TestOr(t *testing.T) {
 		g := NewWithT(t)
 		m := &clusterv1.Machine{}
 		g.Expect(machinefilters.Or(falseFilter, falseFilter)(m)).To(BeFalse())
+	})
+}
+
+func TestHasUnhealthyCondition(t *testing.T) {
+	t.Run("healthy machine (without HealthCheckSucceeded condition) should return false", func(t *testing.T) {
+		g := NewWithT(t)
+		m := &clusterv1.Machine{}
+		g.Expect(machinefilters.HasUnhealthyCondition(m)).To(BeFalse())
+	})
+	t.Run("healthy machine (with HealthCheckSucceeded condition == True) should return false", func(t *testing.T) {
+		g := NewWithT(t)
+		m := &clusterv1.Machine{}
+		conditions.MarkTrue(m, clusterv1.MachineHealthCheckSuccededCondition)
+		g.Expect(machinefilters.HasUnhealthyCondition(m)).To(BeFalse())
+	})
+	t.Run("unhealthy machine NOT eligible for KCP remediation (with withHealthCheckSucceeded condition == False but without OwnerRemediated) should return false", func(t *testing.T) {
+		g := NewWithT(t)
+		m := &clusterv1.Machine{}
+		conditions.MarkFalse(m, clusterv1.MachineHealthCheckSuccededCondition, clusterv1.MachineHasFailureReason, clusterv1.ConditionSeverityWarning, "")
+		g.Expect(machinefilters.HasUnhealthyCondition(m)).To(BeFalse())
+	})
+	t.Run("unhealthy machine eligible for KCP (with HealthCheckSucceeded condition == False and with OwnerRemediated) should return true", func(t *testing.T) {
+		g := NewWithT(t)
+		m := &clusterv1.Machine{}
+		conditions.MarkFalse(m, clusterv1.MachineHealthCheckSuccededCondition, clusterv1.MachineHasFailureReason, clusterv1.ConditionSeverityWarning, "")
+		conditions.MarkFalse(m, clusterv1.MachineOwnerRemediatedCondition, clusterv1.WaitingForRemediationReason, clusterv1.ConditionSeverityWarning, "")
+		g.Expect(machinefilters.HasUnhealthyCondition(m)).To(BeTrue())
 	})
 }
 
@@ -279,7 +307,7 @@ func TestMatchesTemplateClonedFrom_WithClonedFromAnnotations(t *testing.T) {
 	machine := &clusterv1.Machine{
 		Spec: clusterv1.MachineSpec{
 			InfrastructureRef: corev1.ObjectReference{
-				APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha3",
+				APIVersion: "infrastructure.cluster.x-k8s.io/v1alpha4",
 				Kind:       "InfrastructureMachine",
 				Name:       "infra-config1",
 				Namespace:  "default",
@@ -329,7 +357,7 @@ func TestMatchesTemplateClonedFrom_WithClonedFromAnnotations(t *testing.T) {
 				machine.Name: {
 					Object: map[string]interface{}{
 						"kind":       "InfrastructureMachine",
-						"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha3",
+						"apiVersion": "infrastructure.cluster.x-k8s.io/v1alpha4",
 						"metadata": map[string]interface{}{
 							"name":        "infra-config1",
 							"namespace":   "default",

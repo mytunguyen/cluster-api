@@ -30,27 +30,24 @@ import (
 
 	"github.com/onsi/ginkgo"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
-	admissionv1beta1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog"
 	"k8s.io/klog/klogr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
-	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	bootstrapv1 "sigs.k8s.io/cluster-api/bootstrap/kubeadm/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/log"
 	"sigs.k8s.io/cluster-api/controllers/external"
-	kcpv1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha3"
-	addonv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha3"
-	crs "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha3"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1alpha3"
-	"sigs.k8s.io/cluster-api/util"
+	kcpv1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1alpha4"
+	addonv1 "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha4"
+	crs "sigs.k8s.io/cluster-api/exp/addons/api/v1alpha4"
+	expv1 "sigs.k8s.io/cluster-api/exp/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/util/kubeconfig"
 	utilyaml "sigs.k8s.io/cluster-api/util/yaml"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -83,7 +80,6 @@ func init() {
 	utilruntime.Must(crs.AddToScheme(scheme.Scheme))
 	utilruntime.Must(addonv1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(kcpv1.AddToScheme(scheme.Scheme))
-	utilruntime.Must(admissionv1beta1.AddToScheme(scheme.Scheme))
 	utilruntime.Must(admissionv1.AddToScheme(scheme.Scheme))
 
 	// Get the root of the current file to use in CRD paths.
@@ -98,11 +94,13 @@ func init() {
 			filepath.Join(root, "controlplane", "kubeadm", "config", "crd", "bases"),
 			filepath.Join(root, "bootstrap", "kubeadm", "config", "crd", "bases"),
 		},
-		CRDs: []runtime.Object{
+		CRDs: []client.Object{
 			external.TestGenericBootstrapCRD.DeepCopy(),
 			external.TestGenericBootstrapTemplateCRD.DeepCopy(),
 			external.TestGenericInfrastructureCRD.DeepCopy(),
 			external.TestGenericInfrastructureTemplateCRD.DeepCopy(),
+			external.TestGenericInfrastructureRemediationCRD.DeepCopy(),
+			external.TestGenericInfrastructureRemediationTemplateCRD.DeepCopy(),
 		},
 	}
 }
@@ -113,7 +111,7 @@ type TestEnvironment struct {
 	client.Client
 	Config *rest.Config
 
-	doneMgr chan struct{}
+	cancel context.CancelFunc
 }
 
 // NewTestEnvironment creates a new environment spinning up a local api-server.
@@ -121,26 +119,28 @@ type TestEnvironment struct {
 // This function should be called only once for each package you're running tests within,
 // usually the environment is initialized in a suite_test.go file within a `BeforeSuite` ginkgo block.
 func NewTestEnvironment() *TestEnvironment {
-
 	// initialize webhook here to be able to test the envtest install via webhookOptions
 	// This should set LocalServingCertDir and LocalServingPort that are used below.
 	initializeWebhookInEnvironment()
 
 	if _, err := env.Start(); err != nil {
+		err = kerrors.NewAggregate([]error{err, env.Stop()})
 		panic(err)
 	}
 
 	options := manager.Options{
 		Scheme:             scheme.Scheme,
 		MetricsBindAddress: "0",
-		NewClient:          util.ManagerDelegatingClientFunc,
 		CertDir:            env.WebhookInstallOptions.LocalServingCertDir,
 		Port:               env.WebhookInstallOptions.LocalServingPort,
 	}
 
 	mgr, err := ctrl.NewManager(env.Config, options)
+	if err != nil {
+		klog.Fatalf("Failed to start testenv manager: %v", err)
+	}
 
-	//Set minNodeStartupTimeout for Test, so it does not need to be at least 30s
+	// Set minNodeStartupTimeout for Test, so it does not need to be at least 30s
 	clusterv1.SetMinNodeStartupTimeout(metav1.Duration{Duration: 1 * time.Millisecond})
 
 	if err := (&clusterv1.Cluster{}).SetupWebhookWithManager(mgr); err != nil {
@@ -176,15 +176,11 @@ func NewTestEnvironment() *TestEnvironment {
 	if err := (&crs.ClusterResourceSet{}).SetupWebhookWithManager(mgr); err != nil {
 		klog.Fatalf("unable to create webhook for crs: %+v", err)
 	}
-	if err != nil {
-		klog.Fatalf("Failed to start testenv manager: %v", err)
-	}
 
 	return &TestEnvironment{
 		Manager: mgr,
 		Client:  mgr.GetClient(),
 		Config:  mgr.GetConfig(),
-		doneMgr: make(chan struct{}),
 	}
 }
 
@@ -197,7 +193,7 @@ const (
 
 // Mutate the name of each webhook, because kubebuilder generates the same name for all controllers.
 // In normal usage, kustomize will prefix the controller name, which we have to do manually here.
-func appendWebhookConfiguration(mutatingWebhooks []runtime.Object, validatingWebhooks []runtime.Object, configyamlFile []byte, tag string) ([]runtime.Object, []runtime.Object, error) {
+func appendWebhookConfiguration(mutatingWebhooks []client.Object, validatingWebhooks []client.Object, configyamlFile []byte, tag string) ([]client.Object, []client.Object, error) {
 
 	objs, err := utilyaml.ToUnstructured(configyamlFile)
 	if err != nil {
@@ -225,9 +221,8 @@ func appendWebhookConfiguration(mutatingWebhooks []runtime.Object, validatingWeb
 }
 
 func initializeWebhookInEnvironment() {
-
-	validatingWebhooks := []runtime.Object{}
-	mutatingWebhooks := []runtime.Object{}
+	validatingWebhooks := []client.Object{}
+	mutatingWebhooks := []client.Object{}
 
 	// Get the root of the current file to use in CRD paths.
 	_, filename, _, _ := goruntime.Caller(0) //nolint
@@ -261,7 +256,7 @@ func initializeWebhookInEnvironment() {
 	}
 	mutatingWebhooks, validatingWebhooks, err = appendWebhookConfiguration(mutatingWebhooks, validatingWebhooks, controlplaneyamlFile, "cp")
 	if err != nil {
-		klog.Fatalf("Failed to append cocontrolplane controller webhook config: %v", err)
+		klog.Fatalf("Failed to append controlplane controller webhook config: %v", err)
 	}
 	env.WebhookInstallOptions = envtest.WebhookInstallOptions{
 		MaxTime:            20 * time.Second,
@@ -270,8 +265,10 @@ func initializeWebhookInEnvironment() {
 		MutatingWebhooks:   mutatingWebhooks,
 	}
 }
-func (t *TestEnvironment) StartManager() error {
-	return t.Manager.Start(t.doneMgr)
+func (t *TestEnvironment) StartManager(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	t.cancel = cancel
+	return t.Manager.Start(ctx)
 }
 
 func (t *TestEnvironment) WaitForWebhooks() {
@@ -293,15 +290,15 @@ func (t *TestEnvironment) WaitForWebhooks() {
 }
 
 func (t *TestEnvironment) Stop() error {
-	t.doneMgr <- struct{}{}
+	t.cancel()
 	return env.Stop()
 }
 
-func (t *TestEnvironment) CreateKubeconfigSecret(cluster *clusterv1.Cluster) error {
-	return kubeconfig.CreateEnvTestSecret(t.Client, t.Config, cluster)
+func (t *TestEnvironment) CreateKubeconfigSecret(ctx context.Context, cluster *clusterv1.Cluster) error {
+	return kubeconfig.CreateEnvTestSecret(ctx, t.Client, t.Config, cluster)
 }
 
-func (t *TestEnvironment) Cleanup(ctx context.Context, objs ...runtime.Object) error {
+func (t *TestEnvironment) Cleanup(ctx context.Context, objs ...client.Object) error {
 	errs := []error{}
 	for _, o := range objs {
 		err := t.Client.Delete(ctx, o)
@@ -317,7 +314,7 @@ func (t *TestEnvironment) Cleanup(ctx context.Context, objs ...runtime.Object) e
 }
 
 // CreateObj wraps around client.Create and creates the object.
-func (t *TestEnvironment) CreateObj(ctx context.Context, obj runtime.Object, opts ...client.CreateOption) error {
+func (t *TestEnvironment) CreateObj(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	return t.Client.Create(ctx, obj, opts...)
 }
 

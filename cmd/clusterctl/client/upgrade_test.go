@@ -17,14 +17,13 @@ limitations under the License.
 package client
 
 import (
-	"context"
 	"sort"
 	"testing"
 
 	. "github.com/onsi/gomega"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	clusterctlv1 "sigs.k8s.io/cluster-api/cmd/clusterctl/api/v1alpha3"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/cluster"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
@@ -46,8 +45,8 @@ func Test_clusterctlClient_PlanCertUpgrade(t *testing.T) {
 		WithFile("v1.0", "components.yaml", []byte("content"))
 
 	certManagerPlan := CertManagerUpgradePlan{
-		From:          "v0.16.0",
-		To:            "v0.16.1",
+		From:          "v0.16.1",
+		To:            "v1.1.0",
 		ShouldUpgrade: true,
 	}
 	// create a fake cluster, with a cert manager client that has an upgrade
@@ -293,7 +292,7 @@ func Test_clusterctlClient_ApplyUpgrade(t *testing.T) {
 			c, err := proxy.NewClient()
 			g.Expect(err).NotTo(HaveOccurred())
 
-			g.Expect(c.List(context.Background(), gotProviders)).To(Succeed())
+			g.Expect(c.List(ctx, gotProviders)).To(Succeed())
 
 			sort.Slice(gotProviders.Items, func(i, j int) bool {
 				return gotProviders.Items[i].Name < gotProviders.Items[j].Name

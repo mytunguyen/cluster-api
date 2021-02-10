@@ -28,6 +28,11 @@ import (
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/client/config"
 	"sigs.k8s.io/cluster-api/cmd/clusterctl/internal/test"
 	utilyaml "sigs.k8s.io/cluster-api/util/yaml"
+	ctrl "sigs.k8s.io/controller-runtime"
+)
+
+var (
+	ctx = ctrl.SetupSignalHandler()
 )
 
 func Test_clusterctlClient_InitImages(t *testing.T) {
@@ -75,7 +80,7 @@ func Test_clusterctlClient_InitImages(t *testing.T) {
 				kubeconfigContext:      "mgmt-context",
 			},
 			expectedImages: []string{
-				"gcr.io/kubebuilder/kube-rbac-proxy:v0.4.1",
+				"gcr.io/kubebuilder/kube-rbac-proxy:v0.8.0",
 				"us.gcr.io/k8s-artifacts-prod/cluster-api-aws/cluster-api-aws-controller:v0.5.3",
 			},
 			wantErr: false,
@@ -760,7 +765,7 @@ spec:
   template:
     spec:
       containers:
-      - image: gcr.io/kubebuilder/kube-rbac-proxy:v0.4.1
+      - image: gcr.io/kubebuilder/kube-rbac-proxy:v0.8.0
         name: kube-rbac-proxy
       - image: us.gcr.io/k8s-artifacts-prod/cluster-api-aws/cluster-api-aws-controller:v0.5.3
         name: manager

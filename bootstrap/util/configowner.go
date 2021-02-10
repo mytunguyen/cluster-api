@@ -24,9 +24,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/controllers/external"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1alpha3"
+	expv1 "sigs.k8s.io/cluster-api/exp/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/feature"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -74,6 +74,11 @@ func (co ConfigOwner) IsControlPlaneMachine() bool {
 	}
 	_, ok := labels[clusterv1.MachineControlPlaneLabelName]
 	return ok
+}
+
+// IsMachinePool checks if an unstructured object is a MachinePool.
+func (co ConfigOwner) IsMachinePool() bool {
+	return co.GetKind() == "MachinePool"
 }
 
 // GetConfigOwner returns the Unstructured object owning the current resource.

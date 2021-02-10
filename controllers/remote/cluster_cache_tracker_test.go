@@ -25,7 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 	"sigs.k8s.io/cluster-api/util"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,12 +35,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-func mapper(i handler.MapObject) []reconcile.Request {
+func mapper(i client.Object) []reconcile.Request {
 	return []reconcile.Request{
 		{
 			NamespacedName: types.NamespacedName{
-				Namespace: i.Meta.GetNamespace(),
-				Name:      "mapped-" + i.Meta.GetName(),
+				Namespace: i.GetNamespace(),
+				Name:      "mapped-" + i.GetName(),
 			},
 		},
 	}
@@ -50,7 +50,8 @@ var _ = Describe("ClusterCache Tracker suite", func() {
 	Describe("watching", func() {
 		var (
 			mgr           manager.Manager
-			doneMgr       chan struct{}
+			mgrContext    context.Context
+			mgrCancel     context.CancelFunc
 			cct           *ClusterCacheTracker
 			k8sClient     client.Client
 			testNamespace *corev1.Namespace
@@ -74,11 +75,12 @@ var _ = Describe("ClusterCache Tracker suite", func() {
 			w, err = ctrl.NewControllerManagedBy(mgr).For(&clusterv1.MachineDeployment{}).Build(c)
 			Expect(err).To(BeNil())
 
-			doneMgr = make(chan struct{})
+			mgrContext, mgrCancel = context.WithCancel(ctx)
 			By("Starting the manager")
 			go func() {
-				Expect(mgr.Start(doneMgr)).To(Succeed())
+				Expect(mgr.Start(mgrContext)).To(Succeed())
 			}()
+			<-testEnv.Manager.Elected()
 
 			k8sClient = mgr.GetClient()
 
@@ -104,7 +106,7 @@ var _ = Describe("ClusterCache Tracker suite", func() {
 			Expect(k8sClient.Status().Update(ctx, clusterA)).To(Succeed())
 
 			By("Creating a test cluster kubeconfig")
-			Expect(testEnv.CreateKubeconfigSecret(clusterA)).To(Succeed())
+			Expect(testEnv.CreateKubeconfigSecret(ctx, clusterA)).To(Succeed())
 		})
 
 		AfterEach(func() {
@@ -113,7 +115,7 @@ var _ = Describe("ClusterCache Tracker suite", func() {
 			By("Deleting any Clusters")
 			Expect(cleanupTestClusters(ctx, k8sClient)).To(Succeed())
 			By("Stopping the manager")
-			close(doneMgr)
+			mgrCancel()
 		})
 
 		It("with the same name should succeed and not have duplicates", func() {
@@ -123,7 +125,7 @@ var _ = Describe("ClusterCache Tracker suite", func() {
 				Cluster:      util.ObjectKey(clusterA),
 				Watcher:      w,
 				Kind:         &clusterv1.Cluster{},
-				EventHandler: &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(mapper)},
+				EventHandler: handler.EnqueueRequestsFromMapFunc(mapper),
 			})).To(Succeed())
 
 			By("Waiting to receive the watch notification")
@@ -152,7 +154,7 @@ var _ = Describe("ClusterCache Tracker suite", func() {
 				Cluster:      util.ObjectKey(clusterA),
 				Watcher:      w,
 				Kind:         &clusterv1.Cluster{},
-				EventHandler: &handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(mapper)},
+				EventHandler: handler.EnqueueRequestsFromMapFunc(mapper),
 			})).To(Succeed())
 
 			By("Ensuring no additional watch notifications arrive")
@@ -179,7 +181,7 @@ type testController struct {
 	ch chan string
 }
 
-func (c *testController) Reconcile(req reconcile.Request) (reconcile.Result, error) {
+func (c *testController) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	c.ch <- req.Name
 	return ctrl.Result{}, nil
 }

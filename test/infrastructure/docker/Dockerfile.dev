@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.13.15
+FROM golang:1.15.7
 
 # ALERT ################################################################
 # This is an unusual dockerfile. The expected build context is all of  #
@@ -28,7 +28,7 @@ ENV GOPROXY=$goproxy
 
 WORKDIR /tmp
 # install a couple of dependencies
-RUN curl -L https://dl.k8s.io/v1.14.4/kubernetes-client-linux-amd64.tar.gz | tar xvz
+RUN curl -L https://dl.k8s.io/v1.19.2/kubernetes-client-linux-amd64.tar.gz | tar xvz
 RUN mv /tmp/kubernetes/client/bin/kubectl /usr/local/bin
 RUN curl https://get.docker.com | sh
 

@@ -16,7 +16,7 @@ limitations under the License.
 
 package patch
 
-import clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
+import clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
 
 // Option is some configuration that modifies options for a patch request.
 type Option interface {
@@ -30,9 +30,22 @@ type HelperOptions struct {
 	// on the incoming object to match metadata.generation, only if there is a change.
 	IncludeStatusObservedGeneration bool
 
+	// ForceOverwriteConditions allows the patch helper to overwrite conditions in case of conflicts.
+	// This option should only ever be set in controller managing the object being patched.
+	ForceOverwriteConditions bool
+
 	// OwnedConditions defines condition types owned by the controller.
 	// In case of conflicts for the owned conditions, the patch helper will always use the value provided by the controller.
 	OwnedConditions []clusterv1.ConditionType
+}
+
+// WithForceOverwriteConditions allows the patch helper to overwrite conditions in case of conflicts.
+// This option should only ever be set in controller managing the object being patched.
+type WithForceOverwriteConditions struct{}
+
+// ApplyToHelper applies this configuration to the given HelperOptions.
+func (w WithForceOverwriteConditions) ApplyToHelper(in *HelperOptions) {
+	in.ForceOverwriteConditions = true
 }
 
 // WithStatusObservedGeneration sets the status.observedGeneration field

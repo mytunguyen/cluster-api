@@ -120,6 +120,10 @@ type MachinePoolStatus struct {
 	// ObservedGeneration is the latest generation observed by the controller.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions define the current service state of the MachinePool.
+	// +optional
+	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
 }
 
 // ANCHOR_END: MachinePoolStatus
@@ -153,11 +157,11 @@ const (
 	// have become Kubernetes Nodes in the Ready state.
 	MachinePoolPhaseRunning = MachinePoolPhase("Running")
 
-	// MachinePoolPhaseRunning is the MachinePool state when the
+	// MachinePoolPhaseScalingUp is the MachinePool state when the
 	// MachinePool infrastructure is scaling up.
 	MachinePoolPhaseScalingUp = MachinePoolPhase("ScalingUp")
 
-	// MachinePoolPhaseRunning is the MachinePool state when the
+	// MachinePoolPhaseScalingDown is the MachinePool state when the
 	// MachinePool infrastructure is scaling down.
 	MachinePoolPhaseScalingDown = MachinePoolPhase("ScalingDown")
 
@@ -198,11 +202,9 @@ func (m *MachinePoolStatus) GetTypedPhase() MachinePoolPhase {
 	}
 }
 
-// +kubebuilder:object:root=true
 // +kubebuilder:resource:path=machinepools,shortName=mp,scope=Namespaced,categories=cluster-api
 // +kubebuilder:subresource:status
 // +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas
-// +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="Replicas",type="string",JSONPath=".status.replicas",description="MachinePool replicas count"
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase",description="MachinePool status such as Terminating/Pending/Provisioning/Running/Failed etc"
 // +kubebuilder:printcolumn:name="Version",type="string",JSONPath=".spec.template.spec.version",description="Kubernetes version associated with this MachinePool"
@@ -215,6 +217,14 @@ type MachinePool struct {
 
 	Spec   MachinePoolSpec   `json:"spec,omitempty"`
 	Status MachinePoolStatus `json:"status,omitempty"`
+}
+
+func (m *MachinePool) GetConditions() clusterv1.Conditions {
+	return m.Status.Conditions
+}
+
+func (m *MachinePool) SetConditions(conditions clusterv1.Conditions) {
+	m.Status.Conditions = conditions
 }
 
 // +kubebuilder:object:root=true

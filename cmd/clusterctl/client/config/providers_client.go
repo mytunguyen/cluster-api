@@ -34,7 +34,8 @@ const (
 	AWSProviderName       = "aws"
 	AzureProviderName     = "azure"
 	DockerProviderName    = "docker"
-	DOProviderName        = "do"
+	DOProviderName        = "digitalocean"
+	GCPProviderName       = "gcp"
 	Metal3ProviderName    = "metal3"
 	OpenStackProviderName = "openstack"
 	PacketProviderName    = "packet"
@@ -44,11 +45,12 @@ const (
 	// Bootstrap providers
 	KubeadmBootstrapProviderName = "kubeadm"
 	TalosBootstrapProviderName   = "talos"
-	EKSBootstrapProviderName     = "eks"
+	AWSEKSBootstrapProviderName  = "aws-eks"
 
 	// ControlPlane providers
 	KubeadmControlPlaneProviderName = "kubeadm"
 	TalosControlPlaneProviderName   = "talos"
+	AWSEKSControlPlaneProviderName  = "aws-eks"
 
 	// Other
 	ProvidersConfigKey = "providers"
@@ -117,6 +119,11 @@ func (p *providersClient) defaults() []Provider {
 			providerType: clusterctlv1.InfrastructureProviderType,
 		},
 		&provider{
+			name:         GCPProviderName,
+			url:          "https://github.com/kubernetes-sigs/cluster-api-provider-gcp/releases/latest/infrastructure-components.yaml",
+			providerType: clusterctlv1.InfrastructureProviderType,
+		},
+		&provider{
 			name:         PacketProviderName,
 			url:          "https://github.com/kubernetes-sigs/cluster-api-provider-packet/releases/latest/infrastructure-components.yaml",
 			providerType: clusterctlv1.InfrastructureProviderType,
@@ -154,7 +161,7 @@ func (p *providersClient) defaults() []Provider {
 			providerType: clusterctlv1.BootstrapProviderType,
 		},
 		&provider{
-			name:         EKSBootstrapProviderName,
+			name:         AWSEKSBootstrapProviderName,
 			url:          "https://github.com/kubernetes-sigs/cluster-api-provider-aws/releases/latest/eks-bootstrap-components.yaml",
 			providerType: clusterctlv1.BootstrapProviderType,
 		},
@@ -167,6 +174,11 @@ func (p *providersClient) defaults() []Provider {
 		&provider{
 			name:         TalosControlPlaneProviderName,
 			url:          "https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/latest/control-plane-components.yaml",
+			providerType: clusterctlv1.ControlPlaneProviderType,
+		},
+		&provider{
+			name:         AWSEKSControlPlaneProviderName,
+			url:          "https://github.com/kubernetes-sigs/cluster-api-provider-aws/releases/latest/eks-controlplane-components.yaml",
 			providerType: clusterctlv1.ControlPlaneProviderType,
 		},
 	}
